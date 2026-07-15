@@ -23,6 +23,7 @@ CORPUS = [
     ("datasets/ls_static.yml", 1, 9),
     ("datasets/broad_sigma.yml", 10000, 10000),
     ("datasets/cncs_incident_beam.yml", 100, 0),
+    ("datasets/challenge.yml", 1, 9),
 ]
 
 

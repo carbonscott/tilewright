@@ -1,0 +1,23 @@
+# Challenge benchmark — files source with explicit 'params: null':
+# YbBi2IO4.h5 is readable HDF5 whose 9 root arrays are all servable, but the
+# file has ZERO scalar params (no attrs, no 0-d datasets anywhere). Entities
+# are keyed by file path alone; entity metadata is just uid.
+key: CHALLENGE
+metadata:
+  data_type: benchmark
+  material: YbBi2IO4
+source:
+  files:
+    directory: /sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/cwang31-data-broker/converted/challenge
+    pattern: "*.h5"
+    params: null
+artifacts:
+  - {type: cef_Qs, dataset: /cef_Qs}
+  - {type: cef_energies, dataset: /cef_energies}
+  - {type: cef_spectrum, dataset: /cef_spectrum}
+  - {type: mag_0p4K, dataset: /mag_0p4K}
+  - {type: mag_1p8K, dataset: /mag_1p8K}
+  - {type: mag_5p0K, dataset: /mag_5p0K}
+  - {type: magnon_Qs, dataset: /magnon_Qs}
+  - {type: magnon_energies, dataset: /magnon_energies}
+  - {type: magnon_spectrum, dataset: /magnon_spectrum}

@@ -1,11 +1,8 @@
 """tcb_min.manifest — v2 dataset YAML contract + Parquet manifest generation.
-
-source is a TAGGED UNION: exactly one of files | batch | table (ONBOARDING.md).
-uid is a PROVENANCE hash ([:16] of sha256): files -> rel_path,
-batch -> "rel_path:row", table -> str(row[id]). Validation collects ALL
-errors, prints domain language, exits 1. Shape/dtype are captured at
-generate time — registration never opens HDF5.
-"""
+source is a TAGGED UNION: files | batch | table (ONBOARDING.md). uid is a
+PROVENANCE hash: [:16] sha256 of rel_path | "rel_path:row" | str(row[id]).
+Validation collects ALL errors, prints domain language, exits 1. Shape/dtype
+are captured at generate time — registration never opens HDF5."""
 
 import argparse
 import hashlib
@@ -81,14 +78,15 @@ def validate(raw):
     if tag == "files":
         _only_keys(errors, body, {"directory", "pattern", "params"}, "source.files")
         _need_str(errors, body, "pattern", "source.files")
-        params = body.get("params")
-        if not isinstance(params, dict):
-            errors.append("source.files requires 'params' (mapping: {group, from})")
-        else:
+        params = body.get("params", "absent")
+        if isinstance(params, dict):
             _only_keys(errors, params, {"group", "from"}, "source.files.params")
             _need_str(errors, params, "group", "source.files.params")
             if params.get("from") not in ("attrs", "datasets"):
                 errors.append("source.files.params requires 'from': attrs | datasets")
+        elif params is not None:  # explicit 'params: null' == no per-entity params
+            errors.append("source.files requires 'params' ({group, from} mapping,"
+                          " or null: dataset declares no per-entity params)")
         _check_artifacts(errors, raw, tag)
     elif tag == "batch":
         _only_keys(errors, body, {"directory", "pattern", "params", "extra"}, "source.batch")
@@ -176,22 +174,25 @@ def _h5get(f, fp, path, yaml_key):
 def _generate_files(cfg):
     src = cfg["source"]["files"]
     root = Path(src["directory"])
-    group, from_ = src["params"]["group"], src["params"]["from"]
+    spec = src["params"]  # None == explicit 'params: null' (no per-entity params)
     ent_rows, art_rows = [], []
     for fp in _discover(root, src["pattern"]):
         rel = fp.relative_to(root).as_posix()
         uid = _uid(rel)
         with _h5open(fp) as f:
-            loc = _h5get(f, fp, group, "source.files.params.group")
-            if from_ == "attrs":
-                params = {k: _to_python(loc.attrs[k]) for k in sorted(loc.attrs)}
-            else:  # datasets: 0-dimensional datasets directly under the group
-                params = {k: _to_python(loc[k][()]) for k in sorted(loc.keys())
-                          if isinstance(loc[k], h5py.Dataset) and loc[k].shape == ()}
-            if not params:
-                raise ValueError(f"{fp}: no params at group={group!r} from={from_}")
-            if "uid" in params:
-                raise ValueError(f"{fp}: param name 'uid' is reserved (it is the provenance hash)")
+            params = {}
+            if spec is not None:
+                group, from_ = spec["group"], spec["from"]
+                loc = _h5get(f, fp, group, "source.files.params.group")
+                if from_ == "attrs":
+                    params = {k: _to_python(loc.attrs[k]) for k in sorted(loc.attrs)}
+                else:  # datasets: 0-dimensional datasets directly under the group
+                    params = {k: _to_python(loc[k][()]) for k in sorted(loc.keys())
+                              if isinstance(loc[k], h5py.Dataset) and loc[k].shape == ()}
+                if not params:
+                    raise ValueError(f"{fp}: no params at group={group!r} from={from_}")
+                if "uid" in params:
+                    raise ValueError(f"{fp}: param name 'uid' is reserved (it is the provenance hash)")
             ent_rows.append({"uid": uid, **params})
             for art in cfg["artifacts"]:
                 ds = _h5get(f, fp, art["dataset"], f"artifact type={art['type']} dataset")

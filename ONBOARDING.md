@@ -83,8 +83,12 @@ source:
 - `pattern` (string, required) — glob relative to `directory`. Make it
   exclude non-HDF5 siblings (e.g. `*.h5` when the dir also holds `.nc`
   twins; `*/simulations.h5` to match one file per subdirectory).
-- `params` (mapping, required) — where the per-entity physics parameters
-  live inside each file. Two keys, both required:
+- `params` (mapping or `null`, required) — where the per-entity physics
+  parameters live inside each file. `params: null` is an explicit opt-in
+  declaring the dataset has no per-entity params: entities are keyed by
+  file path alone and their metadata is just `uid`. It is not a fallback —
+  a `params` lookup that finds nothing is still a hard error. As a mapping,
+  two keys, both required:
   - `group` — the HDF5 group to look in (`"/"` for the root, `/params`
     for a named group).
   - `from` — one of exactly two values:
@@ -133,6 +137,8 @@ source:
       globus_path: "/maiqmag/.../{filename}"
 ```
 
+- `directory` here is where the **sidecar** lives — it need not be the data
+  directory and need not be server-readable (no bytes are served).
 - `path` (string, required) — the sidecar Parquet, relative to `directory`.
   One row per entity; every column becomes queryable entity metadata.
 - `id` (string, required) — the column whose value identifies the entity.
@@ -210,7 +216,9 @@ with h5py.File(fp, "r") as f:
 | Scalar params are **attributes** on one group (often the root) | `files` | `{group: <that group>, from: attrs}` | every non-param dataset is an artifact |
 | Scalar params are **0-d datasets** (`shape=()`) under one group | `files` | `{group: <that group>, from: datasets}` | every non-param dataset is an artifact |
 | One group holds `(N,)` datasets and the big arrays are `(N, ...)` with the same leading N | `batch` | `{group: <that group>}` | only `(N, ...)` leading-axis datasets can be artifacts; everything else clients need (e.g. a `(151,)` axis) becomes a metadata path entry |
+| Readable HDF5, arrays present, but **no scalar params anywhere** (no attrs, no 0-d datasets) | `files` | `null` — explicit opt-in: entities keyed by file path alone, metadata is just `uid` | every dataset is an artifact |
 | h5py cannot open the files at all (not HDF5, or data lives at a remote facility), but a per-entity Parquet table exists or can be built | `table` | — (`id` = a unique column) | none: `artifacts` absent or `[]` |
+| **Openable** HDF5 but no extractable scalar params at a single group (params scattered in nested subgroups) | prefer `files` + `params: null` if the arrays should be served; `table` if you have (or build) a per-entity sidecar and accept pointer-only | per that choice | per that choice |
 
 The membership rule, stated once and binding: **files -> every non-param
 dataset is an artifact; batch -> only (N, ...) leading-axis datasets can be
@@ -234,8 +242,9 @@ find the discrepancy (unmatched files, wrong N, unexpected rows) first.
 ## Limits and reserved names — what the contract cannot say
 
 - **One params group only.** Params scattered across nested subgroups (e.g.
-  `/instrument/Ei` carrying a `value` attr per subgroup) are
-  unrepresentable. Do not improvise a workaround — stop and report.
+  `/instrument/Ei` carrying a `value` attr per subgroup) are unrepresentable
+  as params. Route per the step-3 table: `files` + `params: null` if the
+  arrays should be served, `table` + sidecar if you accept pointer-only.
 - **No exclude mechanism.** Every attr (or 0-d dataset) under the params
   group is ingested, including housekeeping (`NX_class`, version strings).
   If that pollutes the metadata, there is no filter — accept it or report.
@@ -373,8 +382,10 @@ sources). Shape and dtype are captured now; registration never opens HDF5.
 uv run tiled serve config config.yml --api-key tcbmin
 # serves http://127.0.0.1:8017; creates ./catalog.db on first run
 ```
-If your dataset directory is new, add it under `readable_storage` in
-`config.yml` first.
+Read-only pre-check (no config edit needed): `grep -A8 readable_storage
+config.yml` and confirm your dataset directory or a parent is listed. If it
+is not, add it — and note config edits take effect only after a server
+restart.
 
 **4. Register:**
 ```bash
@@ -382,6 +393,8 @@ uv run python -m tcb_min.register datasets/my_dataset.yml \
     --manifests manifests/MY_DATASET --url http://localhost:8017 --api-key tcbmin
 # -> dataset=MY_DATASET entities_added=N artifacts_added=M skipped=0 failed=0
 ```
+A bare `Retrying...` on stderr from the tiled client is a harmless
+transient — ignore it as long as the summary line shows `failed=0`.
 Re-running is safe: an already-complete entity counts as `skipped`. An
 entity whose array-children count disagrees with the manifest (a crashed
 earlier run) prints a loud WARNING and counts as `failed` — delete it and
@@ -402,7 +415,8 @@ involved. Decode the common ones here before changing anything else:
 |---|---|---|
 | `OSError: ... file signature not found` / `<file>: cannot open as HDF5` | `pattern` matched a non-HDF5 sibling (a `.nc` twin, a Parquet sidecar) | Tighten `pattern` (e.g. `"*.h5"`); re-check step 1 of the inspection protocol |
 | Bare `KeyError: "... object 'X' doesn't exist"` with **no filename** | An HDF5 path is wrong in your own snippet (generation always prefixes the filename: `<file>: <yaml key> '/X' not found in file` means that path is absent in that matched file) | Run the step-2 dump on the named file; fix the group/dataset path in the YAML |
-| `<file>: no params at group='...' from=...` | Wrong `group`, wrong `from` (attrs vs datasets), or the "scalars" are `(1,)`-shaped, which `from: datasets` skips | Check the dump: attrs on the group → `from: attrs`; `shape=()` datasets → `from: datasets`; `(1,)` shapes → unsupported, stop and report |
+| `<file>: no params at group='...' from=...` | Wrong `group`, wrong `from` (attrs vs datasets), or the "scalars" are `(1,)`-shaped, which `from: datasets` skips | Check the dump: attrs on the group → `from: attrs`; `shape=()` datasets → `from: datasets`; `(1,)` shapes → unsupported, stop and report; genuinely no params anywhere in the file → `params: null` (explicit opt-in, step-3 table) |
+| `sidecar column 'uid' is reserved` | The table sidecar carries a `uid` column — that name is the provenance hash | Rebuild the sidecar with the column renamed (e.g. `producer_uid`) or dropped, point `path` at the rebuilt file |
 | `pyarrow.lib.ArrowInvalid` while writing manifests | One param changes type/shape across files (scalar in one file, array or string in another) | Dump two files and diff their params; fix the inconsistent one or report |
 | `uid collision: N duplicate provenance ids` | Table `id` column is not unique (all-NaN ids hash identically), or duplicate rows | Choose a genuinely unique id column; dedupe the sidecar |
 | `no files match '...' under ...` | Wrong `pattern` — or the `directory` itself does not exist (same message) | `ls` the directory first; test the glob: `ls <directory>/<pattern>` |
