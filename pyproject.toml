@@ -1,0 +1,21 @@
+[project]
+name = "tcb-min"
+version = "0.1.0"
+description = "Minimal Tiled catalog broker: YAML contract -> Parquet manifests -> HTTP registration"
+requires-python = ">=3.11"
+dependencies = [
+    "tiled[server]>=0.2.9,<0.3",
+    "h5py",
+    "numpy",
+    "pandas",
+    "pyarrow",
+    "PyYAML",
+    "pydantic>=2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tcb_min"]

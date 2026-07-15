@@ -1,0 +1,26 @@
+# LCLS qRIXS static scans — per_entity layout, params in HDF5 root attributes.
+# One file = one entity. The directory also holds a S_52.nc netCDF twin of the
+# same data; the "*.h5" pattern excludes it on purpose.
+key: LCLS_RIXS_STATIC
+label: "LCLS RIXS Static"
+metadata:
+  data_type: experimental
+  material: NiPS3
+  method: RIXS
+  facility: LCLS
+data:
+  directory: /sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/LS/static
+  layout: per_entity
+  file_pattern: "*.h5"
+parameters:
+  location: root_attributes
+artifacts:
+  - {type: I0, dataset: /I0}
+  - {type: I_rn, dataset: /I_rn}
+  - {type: S, dataset: /S}
+  - {type: counts, dataset: /counts}
+  - {type: energy, dataset: /energy}
+  - {type: motor, dataset: /motor}
+  - {type: motor_step, dataset: /motor_step}
+  - {type: pixel, dataset: /pixel}
+  - {type: rn, dataset: /rn}

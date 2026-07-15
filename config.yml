@@ -1,0 +1,15 @@
+uvicorn:
+  host: "127.0.0.1"
+  port: 8017
+trees:
+  - path: /
+    tree: catalog
+    args:
+      uri: "sqlite:///catalog.db"
+      init_if_not_exists: true
+      adapters_by_mimetype:
+        application/x-hdf5-broker: "tcb_min.lazy_hdf5:LazyHDF5ArrayAdapter"
+      readable_storage:
+        - "/sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/LS/static"
+        - "/sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/RIXS_SIM_BROAD_SIGMA"
+        - "/sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/19g/NiPS3_powder/output4tiled"

@@ -1,0 +1,23 @@
+# CNCS incident-beam McStas simulations — pointer layout: the MCPL event
+# files are not Tiled-readable; params come from the sidecar Parquet (one row
+# per file) and locator templates render per-entity Globus pointers.
+key: CNCS_incident_beam
+label: "CNCS Incident Beam (McStas, SNS/ORNL)"
+metadata:
+  data_type: simulation
+  producer: McStas
+  facility: SNS/ORNL
+  instrument: CNCS
+  pi: "G. E. Granroth"
+data:
+  directory: /sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/19g/mcstas_incident_beam/cncs_new
+  layout: pointer
+  sidecar: CNCS_srtd.parquet
+parameters:
+  location: sidecar
+artifacts: []
+locator:
+  mcpl_filename: "{filename}"
+  globus_endpoint: "ee51784b-3173-4ff2-bab5-38c4bd867d02"
+  globus_path: "/maiqmag/19g/mcstas_incident_beam/cncs_new/{filename}"
+  globus_url: "https://app.globus.org/file-manager?origin_id=ee51784b-3173-4ff2-bab5-38c4bd867d02&origin_path=/maiqmag/19g/mcstas_incident_beam/cncs_new/{filename}"

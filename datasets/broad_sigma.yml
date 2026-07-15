@@ -1,0 +1,22 @@
+# RIXS simulation sweep — batched layout: 5 files x 2000 stacked entities.
+# Entity i's spectrum is /spectra[i]; its 12 params are row i of the (2000,)
+# datasets under /params.
+key: BROAD_SIGMA
+label: "Broad Sigma"
+metadata:
+  data_type: simulation
+  material: NiPS3
+data:
+  directory: /sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/RIXS_SIM_BROAD_SIGMA
+  layout: batched
+  file_pattern: "*/simulations.h5"
+parameters:
+  location: group
+  group: /params
+artifacts:
+  - {type: rixs_spectrum, dataset: /spectra}
+shared:
+  - {type: eloss, dataset: /eloss}
+  - {type: omega_bounds, dataset: /omega_bounds}
+extra_metadata:
+  - dataset: /log_probs
