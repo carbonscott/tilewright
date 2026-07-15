@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 register_broad.log
 *.ts
+.pytest_cache/

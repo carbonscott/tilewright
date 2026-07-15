@@ -134,10 +134,10 @@ def register_dataset(cfg, ent_df, art_df, url, api_key, max_workers=8):
 
 def main(argv=None):
     p = argparse.ArgumentParser(
-        prog="python -m tcb_min.register",
+        prog="tcb register",
         description="Register manifests into a running Tiled server over HTTP.",
     )
-    p.add_argument("yaml_path", help="dataset YAML (see ONBOARDING.md)")
+    p.add_argument("yaml_path", help="dataset YAML (see the tcb-onboard skill)")
     p.add_argument("--manifests", required=True,
                    help="dir containing entities.parquet + artifacts.parquet")
     p.add_argument("--url", default="http://localhost:8017")

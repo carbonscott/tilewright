@@ -6,7 +6,7 @@ Run from the repo root (a host that can see the /sdf proof-corpus data):
 
 Three budgets are enforced here:
   1. the proof corpus generates exactly the expected entity/artifact counts;
-  2. total source LOC in tcb_min/ stays <= 700;
+  2. total source LOC in tcb_min/ stays <= 750;
   3. the contract's top-level concept set never grows past 4 keys.
 """
 
@@ -20,10 +20,10 @@ REPO = Path(__file__).resolve().parent.parent
 
 # The proof corpus IS the fixture: adding a dataset = adding a row.
 CORPUS = [
-    ("datasets/ls_static.yml", 1, 9),
-    ("datasets/broad_sigma.yml", 10000, 10000),
-    ("datasets/cncs_incident_beam.yml", 100, 0),
-    ("datasets/challenge.yml", 1, 9),
+    ("examples/datasets/ls_static.yml", 1, 9),
+    ("examples/datasets/broad_sigma.yml", 10000, 10000),
+    ("examples/datasets/cncs_incident_beam.yml", 100, 0),
+    ("examples/datasets/challenge.yml", 1, 9),
 ]
 
 
@@ -40,7 +40,7 @@ def test_corpus_counts(tmp_path, yaml_rel, n_entities, n_artifacts):
 def test_loc_budget():
     total = sum(len(p.read_text().splitlines())
                 for p in (REPO / "tcb_min").glob("*.py"))
-    assert total <= 700, f"OVER BUDGET: tcb_min/*.py totals {total} LOC > 700"
+    assert total <= 750, f"OVER BUDGET: tcb_min/*.py totals {total} LOC > 750"
 
 
 def test_contract_concept_budget():

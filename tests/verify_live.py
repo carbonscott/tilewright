@@ -28,7 +28,7 @@ def main():
         assert count == n, f"{key}: {count} entities != expected {n}"
         print(f"PASS {key} entity count == {n}")
 
-    cfg = yaml.safe_load((REPO / "datasets/broad_sigma.yml").read_text())
+    cfg = yaml.safe_load((REPO / "examples/datasets/broad_sigma.yml").read_text())
     base = cfg["source"]["batch"]["directory"]
     ent = c["BROAD_SIGMA"].values().first()
     served = ent["rixs_spectrum"][0:5, :]

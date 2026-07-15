@@ -362,15 +362,15 @@ All from the repo root, with `UV_CACHE_DIR` exported (see Prerequisites).
 
 **1. Validate the contract only (touches no data):**
 ```bash
-uv run python -m tcb_min.manifest datasets/my_dataset.yml --check
+uv run tcb manifest examples/datasets/my_dataset.yml --check
 # -> contract OK: key=... source=files|batch|table artifacts=N
 # invalid -> every error printed ("source.table requires 'id' ..."), exit 1
 ```
 
 **2. Generate manifests:**
 ```bash
-uv run python -m tcb_min.manifest datasets/my_dataset.yml -o manifests/MY_DATASET
-# -> dataset=MY_DATASET entities=N artifacts=M -> manifests/MY_DATASET/...
+uv run tcb manifest examples/datasets/my_dataset.yml -o examples/manifests/MY_DATASET
+# -> dataset=MY_DATASET entities=N artifacts=M -> examples/manifests/MY_DATASET/...
 ```
 This writes `entities.parquet` (uid + one column per parameter [+ extra,
 locator columns]) and `artifacts.parquet`
@@ -389,8 +389,8 @@ restart.
 
 **4. Register:**
 ```bash
-uv run python -m tcb_min.register datasets/my_dataset.yml \
-    --manifests manifests/MY_DATASET --url http://localhost:8017 --api-key tcbmin
+uv run tcb register examples/datasets/my_dataset.yml \
+    --manifests examples/manifests/MY_DATASET --url http://localhost:8017 --api-key tcbmin
 # -> dataset=MY_DATASET entities_added=N artifacts_added=M skipped=0 failed=0
 ```
 A bare `Retrying...` on stderr from the tiled client is a harmless
