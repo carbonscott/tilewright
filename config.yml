@@ -13,3 +13,5 @@ trees:
         - "/sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/LS/static"
         - "/sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/RIXS_SIM_BROAD_SIGMA"
         - "/sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/19g/NiPS3_powder/output4tiled"
+        - "/sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/cwang31-data-broker/converted/rixs"
+        - "/sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/cwang31-data-broker/converted/challenge"

@@ -172,24 +172,92 @@ correct — identity is where the data came from; params are pure queryable
 metadata and may collide freely. Regenerating a manifest is stable as long
 as file names (or table ids) don't change.
 
-## How to choose the source tag — look at the data
+## First run — inspect the data before writing any YAML
 
-1. Does one file correspond to one physical entity (one sample, one scan,
-   one simulation)? → `files`.
-2. Are many entities stacked along axis 0 of big datasets (params as
-   `(N,)` arrays, data as `(N, ...)` arrays)? → `batch`.
-3. Can Tiled not read the bytes at all, but a Parquet of per-entity rows
-   exists? → `table`.
+Do not reason about what the data "should" be; run this protocol and decide
+from what you observe.
 
-## How to choose `params.from` (files only) — look where the numbers live
+**Step 1 — list the directory.** Note every non-HDF5 sibling; your `pattern`
+must exclude them all.
+
+```bash
+ls -la /abs/path/to/dataset_dir      # .nc twins? .parquet sidecars? .gz? subdirs?
+```
+
+**Step 2 — dump one candidate file completely** (every dataset's shape/dtype
+and every attribute at every level, groups included):
 
 ```python
 import h5py
-f = h5py.File("sample.h5", "r")
-dict(f.attrs)                              # non-empty? -> {group: "/", from: attrs}
-[k for k in f if f[k].shape == ()]         # 0-dim root datasets? -> {group: "/", from: datasets}
-list(f["/params"])                         # named group of scalars? -> {group: /params, from: datasets}
+fp = "/abs/path/to/one_matched_file.h5"
+with h5py.File(fp, "r") as f:
+    for k, v in f.attrs.items():                     # root attrs (visititems skips "/")
+        print(f"attr /@{k} = {v!r}")
+    def dump(name, obj):
+        if isinstance(obj, h5py.Dataset):
+            print(f"D /{name}  shape={obj.shape} dtype={obj.dtype}")
+        else:
+            print(f"G /{name}/")
+        for k, v in obj.attrs.items():
+            print(f"attr /{name}@{k} = {v!r}")
+    f.visititems(dump)
 ```
+
+**Step 3 — read your observations off this table:**
+
+| Observation in the dump | source tag | params | artifact membership |
+|---|---|---|---|
+| Scalar params are **attributes** on one group (often the root) | `files` | `{group: <that group>, from: attrs}` | every non-param dataset is an artifact |
+| Scalar params are **0-d datasets** (`shape=()`) under one group | `files` | `{group: <that group>, from: datasets}` | every non-param dataset is an artifact |
+| One group holds `(N,)` datasets and the big arrays are `(N, ...)` with the same leading N | `batch` | `{group: <that group>}` | only `(N, ...)` leading-axis datasets can be artifacts; everything else clients need (e.g. a `(151,)` axis) becomes a metadata path entry |
+| h5py cannot open the files at all (not HDF5, or data lives at a remote facility), but a per-entity Parquet table exists or can be built | `table` | — (`id` = a unique column) | none: `artifacts` absent or `[]` |
+
+The membership rule, stated once and binding: **files -> every non-param
+dataset is an artifact; batch -> only (N, ...) leading-axis datasets can be
+artifacts, everything else clients need becomes a metadata path entry.**
+(That is why worked example 1 lists axis-like datasets such as `energy` and
+`pixel` as artifacts, while worked example 2 puts `/eloss` in metadata: in
+batch, a `(151,)` axis has no leading N and cannot be an artifact.)
+
+**Step 4 — predict, then compare.** Count the matched files
+(`ls <directory>/<pattern> | wc -l`) and predict the generator's output
+before running it:
+
+- `files`: entities = matched files; artifacts = entities × len(artifacts)
+- `batch`: entities = sum of N over matched files; artifacts = entities × len(artifacts)
+- `table`: entities = sidecar rows; artifacts = 0
+
+The tool's summary line (`dataset=... entities=... artifacts=...`) must
+equal your prediction exactly. If it does not, **stop** — do not register;
+find the discrepancy (unmatched files, wrong N, unexpected rows) first.
+
+## Limits and reserved names — what the contract cannot say
+
+- **One params group only.** Params scattered across nested subgroups (e.g.
+  `/instrument/Ei` carrying a `value` attr per subgroup) are
+  unrepresentable. Do not improvise a workaround — stop and report.
+- **No exclude mechanism.** Every attr (or 0-d dataset) under the params
+  group is ingested, including housekeeping (`NX_class`, version strings).
+  If that pollutes the metadata, there is no filter — accept it or report.
+- **Batch params group is all-or-nothing.** Every dataset under a batch
+  `params.group` must have leading axis N; a non-conforming dataset (an
+  axis parked in the group) is a hard error, not skipped.
+- **`(1,)`-shaped values are not 0-d scalars.** `from: datasets` takes only
+  `shape=()` datasets; `(1,)` ones are silently skipped — check the dump.
+- **Array-valued params become lists** in entity metadata — unqueryable by
+  `Key` comparisons. Dead weight; and a param that is scalar in one file
+  but an array in another kills Parquet writing (`ArrowInvalid`).
+- **`uid` is reserved** everywhere (params, sidecar columns): it is the
+  provenance hash. Generation refuses it.
+- **Locator keys must not shadow sidecar columns** — a locator named like
+  an existing column (e.g. `filename`) silently overwrites it.
+- **Artifact `type` values must be unique** — each becomes a Tiled child
+  key. Validation refuses duplicates.
+- **`directory` must be absolute** — validation refuses relative paths
+  (they would generate fine and break at serve time).
+- **No sidecar table yet?** For a `table` source you may build one yourself
+  with pandas (one row per entity, one unique id column,
+  `df.to_parquet(...)`) and point `path` at it. That is allowed.
 
 ## Worked example 1 — files (LCLS RIXS static scans)
 
@@ -324,6 +392,20 @@ re-register.
 uv run --with pytest pytest tests/ -v     # offline: corpus counts + budgets
 uv run python tests/verify_live.py        # manual: needs the server running
 ```
+
+## Error triage — symptom, cause, fix
+
+Generation errors are prefixed with the offending filename and the YAML key
+involved. Decode the common ones here before changing anything else:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `OSError: ... file signature not found` / `<file>: cannot open as HDF5` | `pattern` matched a non-HDF5 sibling (a `.nc` twin, a Parquet sidecar) | Tighten `pattern` (e.g. `"*.h5"`); re-check step 1 of the inspection protocol |
+| Bare `KeyError: "... object 'X' doesn't exist"` with **no filename** | An HDF5 path is wrong in your own snippet (generation always prefixes the filename: `<file>: <yaml key> '/X' not found in file` means that path is absent in that matched file) | Run the step-2 dump on the named file; fix the group/dataset path in the YAML |
+| `<file>: no params at group='...' from=...` | Wrong `group`, wrong `from` (attrs vs datasets), or the "scalars" are `(1,)`-shaped, which `from: datasets` skips | Check the dump: attrs on the group → `from: attrs`; `shape=()` datasets → `from: datasets`; `(1,)` shapes → unsupported, stop and report |
+| `pyarrow.lib.ArrowInvalid` while writing manifests | One param changes type/shape across files (scalar in one file, array or string in another) | Dump two files and diff their params; fix the inconsistent one or report |
+| `uid collision: N duplicate provenance ids` | Table `id` column is not unique (all-NaN ids hash identically), or duplicate rows | Choose a genuinely unique id column; dedupe the sidecar |
+| `no files match '...' under ...` | Wrong `pattern` — or the `directory` itself does not exist (same message) | `ls` the directory first; test the glob: `ls <directory>/<pattern>` |
 
 ## Using the catalog — raw tiled cheat sheet
 

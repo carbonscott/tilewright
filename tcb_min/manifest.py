@@ -1,21 +1,10 @@
 """tcb_min.manifest — v2 dataset YAML contract + Parquet manifest generation.
 
-The contract is a TAGGED UNION: `source` holds exactly one of
-  files: one matched HDF5 file = one entity (params from one group,
-         as attributes or 0-d datasets);
-  batch: entities are rows along axis 0 inside each matched file
-         ((N,) datasets under params.group are the param columns);
-  table: passthrough — sidecar Parquet rows ARE the entities, zero artifacts
-and each tag owns only its own keys — illegal combos are unrepresentable.
-
-uid is a PROVENANCE hash, never a param hash: files -> sha256(rel_path),
-batch -> sha256("rel_path:row"), table -> sha256(str(row[id])); [:16].
-Identical params in two files = two entities (correct); params are pure
-queryable metadata. Validation is explicit: ALL errors collected, printed
-in domain language, exit(1); no type coercion. Shape and dtype are captured
-HERE, at generate time — registration never opens HDF5.
-
-Run:  python -m tcb_min.manifest datasets/foo.yml -o manifests/FOO [--check]
+source is a TAGGED UNION: exactly one of files | batch | table (ONBOARDING.md).
+uid is a PROVENANCE hash ([:16] of sha256): files -> rel_path,
+batch -> "rel_path:row", table -> str(row[id]). Validation collects ALL
+errors, prints domain language, exits 1. Shape/dtype are captured at
+generate time — registration never opens HDF5.
 """
 
 import argparse
@@ -34,9 +23,7 @@ SOURCE_TAGS = ("files", "batch", "table")
 ARTIFACT_COLUMNS = ["uid", "type", "file", "dataset", "index", "shape", "dtype"]
 
 
-# ---------------------------------------------------------------------------
-# Validation — explicit checks, every error collected, domain language
-# ---------------------------------------------------------------------------
+# --- validation: explicit checks, every error collected, domain language ---
 
 def _need_str(errors, obj, key, where):
     if not (isinstance(obj.get(key), str) and obj.get(key)):
@@ -51,12 +38,16 @@ def _only_keys(errors, obj, allowed, where):
 def _check_artifacts(errors, raw, tag):
     arts = raw.get("artifacts")
     if not (isinstance(arts, list) and len(arts) >= 1):
-        errors.append(f"source.{tag} requires 'artifacts' (list, min 1)")
+        errors.append(f"top level requires 'artifacts' (list, min 1) when source is '{tag}'"
+                      " — a sibling of 'source', e.g. artifacts: [{type: spectrum, dataset: /spectra}]")
         return
     for i, a in enumerate(arts):
         if not (isinstance(a, dict) and set(a) == {"type", "dataset"}
                 and isinstance(a["type"], str) and isinstance(a["dataset"], str)):
             errors.append(f"artifacts[{i}] must be {{type: <str>, dataset: <str>}}")
+    types = [a.get("type") for a in arts if isinstance(a, dict)]
+    for t in sorted({t for t in types if isinstance(t, str) and types.count(t) > 1}):
+        errors.append(f"artifacts: duplicate type {t!r} — types become Tiled child keys, must be unique")
 
 
 def validate(raw):
@@ -85,6 +76,8 @@ def validate(raw):
         errors.append(f"source.{tag} must be a mapping")
         return errors
     _need_str(errors, body, "directory", f"source.{tag}")
+    if isinstance(body.get("directory"), str) and body["directory"][:1] not in ("/", ""):
+        errors.append(f"source.{tag}.directory must be an absolute path (Mode-B reads break later)")
     if tag == "files":
         _only_keys(errors, body, {"directory", "pattern", "params"}, "source.files")
         _need_str(errors, body, "pattern", "source.files")
@@ -140,9 +133,7 @@ def source_tag(cfg):
     return next(t for t in SOURCE_TAGS if t in cfg["source"])
 
 
-# ---------------------------------------------------------------------------
-# Generation
-# ---------------------------------------------------------------------------
+# --- generation ---
 
 def _uid(provenance):
     """uid = provenance hash: WHERE the entity came from, not its params."""
@@ -167,6 +158,21 @@ def _discover(directory, pattern):
     return files
 
 
+def _h5open(fp):
+    try:
+        return h5py.File(fp, "r", locking=False)
+    except OSError as exc:
+        raise OSError(f"{fp}: cannot open as HDF5 ({exc}) — tighten the source "
+                      "pattern to exclude non-HDF5 siblings") from None
+
+
+def _h5get(f, fp, path, yaml_key):
+    """f[path] with filename + YAML-key context instead of a bare KeyError."""
+    if path not in f:
+        raise KeyError(f"{fp}: {yaml_key} {path!r} not found in file")
+    return f[path]
+
+
 def _generate_files(cfg):
     src = cfg["source"]["files"]
     root = Path(src["directory"])
@@ -175,8 +181,8 @@ def _generate_files(cfg):
     for fp in _discover(root, src["pattern"]):
         rel = fp.relative_to(root).as_posix()
         uid = _uid(rel)
-        with h5py.File(fp, "r", locking=False) as f:
-            loc = f[group]
+        with _h5open(fp) as f:
+            loc = _h5get(f, fp, group, "source.files.params.group")
             if from_ == "attrs":
                 params = {k: _to_python(loc.attrs[k]) for k in sorted(loc.attrs)}
             else:  # datasets: 0-dimensional datasets directly under the group
@@ -184,11 +190,11 @@ def _generate_files(cfg):
                           if isinstance(loc[k], h5py.Dataset) and loc[k].shape == ()}
             if not params:
                 raise ValueError(f"{fp}: no params at group={group!r} from={from_}")
+            if "uid" in params:
+                raise ValueError(f"{fp}: param name 'uid' is reserved (it is the provenance hash)")
             ent_rows.append({"uid": uid, **params})
             for art in cfg["artifacts"]:
-                if art["dataset"] not in f:
-                    raise KeyError(f"{fp}: artifact dataset {art['dataset']!r} not found")
-                ds = f[art["dataset"]]
+                ds = _h5get(f, fp, art["dataset"], f"artifact type={art['type']} dataset")
                 art_rows.append({"uid": uid, "type": art["type"], "file": rel,
                                  "dataset": art["dataset"], "index": None,
                                  "shape": json.dumps(list(ds.shape)),
@@ -203,11 +209,12 @@ def _generate_batch(cfg):
     ent_rows, art_rows = [], []
     for fp in _discover(root, src["pattern"]):
         rel = fp.relative_to(root).as_posix()
-        with h5py.File(fp, "r", locking=False) as f:
-            n = f[cfg["artifacts"][0]["dataset"]].shape[0]
+        with _h5open(fp) as f:
+            n = _h5get(f, fp, cfg["artifacts"][0]["dataset"], "artifacts[0] dataset").shape[0]
             cols = {}
-            for name in sorted(f[group].keys()):
-                obj = f[group][name]
+            grp = _h5get(f, fp, group, "source.batch.params.group")
+            for name in sorted(grp.keys()):
+                obj = grp[name]
                 if isinstance(obj, h5py.Dataset):
                     if obj.shape[:1] != (n,):
                         raise ValueError(f"{fp}: param {name} shape {obj.shape}, "
@@ -215,16 +222,18 @@ def _generate_batch(cfg):
                     cols[name] = obj[:]
             if not cols:
                 raise ValueError(f"{fp}: no (N,) datasets under {group}")
+            if "uid" in cols:
+                raise ValueError(f"{fp}: param name 'uid' is reserved (it is the provenance hash)")
             for path in src.get("extra", []):
-                arr = f[path][:]
+                arr = _h5get(f, fp, path, "source.batch.extra")[:]
                 if arr.shape[0] != n:
-                    raise ValueError(f"{fp}: extra {path} leading axis != {n}")
+                    raise ValueError(f"{fp}: extra {path} leading axis {arr.shape[0]} != {n}")
                 cols[path.rstrip("/").split("/")[-1]] = arr
             art_info = []
             for art in cfg["artifacts"]:
-                ds = f[art["dataset"]]
+                ds = _h5get(f, fp, art["dataset"], f"artifact type={art['type']} dataset")
                 if ds.shape[0] != n:
-                    raise ValueError(f"{fp}: artifact {art['dataset']} leading axis != {n}")
+                    raise ValueError(f"{fp}: artifact {art['dataset']} leading axis {ds.shape[0]} != {n}")
                 art_info.append((art, json.dumps(list(ds.shape[1:])), str(ds.dtype)))
             for i in range(n):
                 uid = _uid(f"{rel}:{i}")
@@ -245,6 +254,8 @@ def _generate_table(cfg):
     df = pd.read_parquet(path)
     if src["id"] not in df.columns:
         raise KeyError(f"source.table id column {src['id']!r} not in {list(df.columns)}")
+    if "uid" in df.columns:
+        raise ValueError(f"{path}: sidecar column 'uid' is reserved (it is the provenance hash)")
     ent_rows = []
     for _, r in df.iterrows():
         params = {k: _to_python(v) for k, v in r.items()}
@@ -285,9 +296,7 @@ def generate_manifests(cfg, outdir):
 
 def main(argv=None):
     p = argparse.ArgumentParser(
-        prog="python -m tcb_min.manifest",
-        description="Validate a dataset YAML and generate Parquet manifests.",
-    )
+        description="Validate a dataset YAML and generate Parquet manifests.")
     p.add_argument("yaml_path", help="dataset YAML (see ONBOARDING.md)")
     p.add_argument("-o", "--outdir", help="output dir for entities/artifacts.parquet")
     p.add_argument("--check", action="store_true",

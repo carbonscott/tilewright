@@ -1,19 +1,11 @@
 """tcb_min.register — manifests + YAML -> HTTP registration into Tiled.
 
-Reads entities.parquet + artifacts.parquet (produced by tcb_min.manifest) and
-registers the Dataset -> Entity -> Artifact hierarchy over HTTP against a
-running Tiled server. HDF5 files are referenced in place
-(Management.external); shape/dtype come from the manifest, so this module
-never imports h5py.
-
-Idempotent, fail-loud: an entity whose key already exists is skipped only if
-its array-children count matches the manifest; a mismatch (half-registered
-entity from a crashed run) prints a loud warning and is counted as failed.
-Entities are registered in parallel (ThreadPoolExecutor, 8 workers — proven
-~80% wall-clock in socket.recv).
-
-Run:  python -m tcb_min.register datasets/foo.yml --manifests manifests/FOO \
-          --url http://localhost:8017 --api-key tcbmin
+Registers Dataset -> Entity -> Artifact over HTTP against a running Tiled
+server; HDF5 files are referenced in place (Management.external), shape and
+dtype come from the manifest — this module never imports h5py. Idempotent,
+fail-loud: an existing complete entity counts as skipped; a half-registered
+one (array children != manifest count) prints a loud WARNING and counts as
+failed. Entities register in parallel (ThreadPoolExecutor, 8 workers).
 """
 
 import argparse
