@@ -6,8 +6,11 @@ running Tiled server. HDF5 files are referenced in place
 (Management.external); shape/dtype come from the manifest, so this module
 never imports h5py.
 
-Idempotent: an entity whose key already exists in the dataset container is
-skipped. Entities are registered in parallel (ThreadPoolExecutor, 8 workers).
+Idempotent, fail-loud: an entity whose key already exists is skipped only if
+its array-children count matches the manifest; a mismatch (half-registered
+entity from a crashed run) prints a loud warning and is counted as failed.
+Entities are registered in parallel (ThreadPoolExecutor, 8 workers — proven
+~80% wall-clock in socket.recv).
 
 Run:  python -m tcb_min.register datasets/foo.yml --manifests manifests/FOO \
           --url http://localhost:8017 --api-key tcbmin
@@ -27,7 +30,7 @@ from tiled.structures.array import ArrayStructure, BuiltinDtype
 from tiled.structures.core import StructureFamily
 from tiled.structures.data_source import Asset, DataSource, Management
 
-from tcb_min.manifest import DatasetConfig, load_config
+from tcb_min.manifest import load_config, source_tag
 
 BROKER_MIMETYPE = "application/x-hdf5-broker"
 
@@ -45,15 +48,7 @@ def to_json_safe(value):
     return value
 
 
-def build_dataset_metadata(cfg: DatasetConfig) -> dict:
-    md = dict(cfg.metadata.model_dump())
-    md.update(cfg.provenance)
-    for ax in cfg.shared:
-        md[f"shared_dataset_{ax.type}"] = ax.dataset
-    return md
-
-
-def _register_artifact(ent_container, directory: str, art_row) -> None:
+def _register_artifact(ent_container, directory, art_row):
     shape = tuple(json.loads(art_row["shape"]))
     dtype = np.dtype(art_row["dtype"])
     structure = ArrayStructure(
@@ -87,13 +82,18 @@ def _register_artifact(ent_container, directory: str, art_row) -> None:
     )
 
 
-def _register_one_entity(parent, dataset_key: str, directory: str,
-                         ent_row, art_group) -> tuple:
+def _register_one_entity(parent, dataset_key, directory, ent_row, art_group):
     """Returns (entities_added, artifacts_added, skipped, failed)."""
     uid = str(ent_row["uid"])
     ent_key = f"{dataset_key}_{uid[:13]}"
     if ent_key in parent:
-        return (0, 0, 1, 0)
+        existing = len(parent[ent_key])
+        if existing == len(art_group):
+            return (0, 0, 1, 0)
+        print(f"WARNING half-registered entity {ent_key}: has {existing} array "
+              f"children, manifest expects {len(art_group)} — counted as failed; "
+              "delete it and re-register", file=sys.stderr)
+        return (0, 0, 0, 1)
     metadata = {col: to_json_safe(val) for col, val in ent_row.items()}
     for _, art in art_group.iterrows():
         metadata[f"path_{art['type']}"] = art["file"]
@@ -112,22 +112,20 @@ def _register_one_entity(parent, dataset_key: str, directory: str,
     return (1, art_added, 0, art_failed)
 
 
-def register_dataset(cfg: DatasetConfig, ent_df: pd.DataFrame,
-                     art_df: pd.DataFrame, url: str, api_key: str,
-                     max_workers: int = 8) -> tuple:
+def register_dataset(cfg, ent_df, art_df, url, api_key, max_workers=8):
     client = from_uri(url, api_key=api_key)
-    dataset_metadata = build_dataset_metadata(cfg)
-    if cfg.key in client:
-        parent = client[cfg.key]
+    directory = cfg["source"][source_tag(cfg)]["directory"]
+    if cfg["key"] in client:
+        parent = client[cfg["key"]]
     else:
-        parent = client.create_container(key=cfg.key, metadata=dataset_metadata)
+        parent = client.create_container(key=cfg["key"], metadata=dict(cfg["metadata"]))
     grouped = dict(tuple(art_df.groupby("uid"))) if len(art_df) else {}
     empty = art_df.iloc[0:0]
     totals = [0, 0, 0, 0]  # entities_added, artifacts_added, skipped, failed
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = [
-            pool.submit(_register_one_entity, parent, cfg.key,
-                        cfg.data.directory, row, grouped.get(row["uid"], empty))
+            pool.submit(_register_one_entity, parent, cfg["key"],
+                        directory, row, grouped.get(row["uid"], empty))
             for _, row in ent_df.iterrows()
         ]
         for fut in as_completed(futures):
@@ -137,12 +135,12 @@ def register_dataset(cfg: DatasetConfig, ent_df: pd.DataFrame,
                 print(f"FAILED entity: {exc}", file=sys.stderr)
                 delta = (0, 0, 0, 1)
             totals = [a + b for a, b in zip(totals, delta)]
-    print(f"dataset={cfg.key} entities_added={totals[0]} "
+    print(f"dataset={cfg['key']} entities_added={totals[0]} "
           f"artifacts_added={totals[1]} skipped={totals[2]} failed={totals[3]}")
     return tuple(totals)
 
 
-def main(argv=None) -> int:
+def main(argv=None):
     p = argparse.ArgumentParser(
         prog="python -m tcb_min.register",
         description="Register manifests into a running Tiled server over HTTP.",

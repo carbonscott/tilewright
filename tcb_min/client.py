@@ -1,79 +1,71 @@
-"""tcb_min.client — thin physicist surface over a tcb-min Tiled catalog.
+"""tcb_min.client — Mode A only: find an entity's source files and read them
+directly with h5py, bypassing the Tiled byte path.
 
-    from tcb_min import client as tcb
-    c = tcb.connect("http://localhost:8017", api_key="tcbmin")
-    tcb.datasets(c)                                   # {key: metadata}
-    hits = tcb.find(c, "BROAD_SIGMA", sigma=(0.04, 0.05))   # lazy search
+For everything else, tiled's own client IS the client — do not wrap it:
+
+    from tiled.client import from_uri
+    from tiled.queries import Key
+
+    c = from_uri("http://localhost:8017", api_key="tcbmin")
+    list(c)                                   # dataset keys
+    dict(c["BROAD_SIGMA"].metadata)           # dataset provenance metadata
+    ds = c["BROAD_SIGMA"]
+    hits = ds.search(Key("sigma") >= 0.04).search(Key("sigma") <= 0.05)
+    len(hits)                                 # SQL-served count
     ent = hits.values().first()
-    tcb.locate(ent)                                   # Mode-A / Globus locators
-    tcb.fetch(ent, "rixs_spectrum", slc=(0, slice(None)))   # sliced numpy read
-    tcb.export_entity(ent)                            # whole entity as HDF5 bytes
+    dict(ent.metadata)                        # physics params + Mode-A locators
+    arr = ent["rixs_spectrum"]
+    arr[0:5, :]                               # server reads only these bytes
+    import io; buf = io.BytesIO()
+    ent.export(buf, format="application/x-hdf5")  # whole entity, one round trip
+
+Only ``Key`` comparisons (==, <=, >=, ...) are SQL-served in tiled 0.2.9 —
+never use ``Regex`` (not SQL-backed). Mode A (this module) is for readers on
+the same filesystem as the data: query with tiled, then bulk-read artifacts
+with h5py at full Lustre speed.
 """
 
-import io
+import os
 
-from tiled.client import from_uri
-from tiled.queries import Key
-
-_LOCATOR_PREFIXES = ("path_", "dataset_", "index_", "globus_")
-
-
-def connect(url, api_key=None):
-    """Connect to the Tiled server; returns the root container client."""
-    return from_uri(url, api_key=api_key)
-
-
-def datasets(client):
-    """Top-level dataset containers: {key: metadata dict}."""
-    return {key: dict(client[key].metadata) for key in client}
-
-
-def find(client, dataset_key, **ranges):
-    """Server-side (SQL) metadata search inside one dataset.
-
-    Each keyword is a queryable entity-metadata key. A 2-tuple/list value
-    ``sigma=(0.04, 0.05)`` becomes ``0.04 <= sigma <= 0.05`` (inclusive);
-    any other value becomes an equality test. Returns the lazy search
-    result — iterate keys, or ``.values()`` for entity clients.
-    """
-    result = client[dataset_key]
-    for name, value in ranges.items():
-        if isinstance(value, (tuple, list)) and len(value) == 2:
-            lo, hi = value
-            result = result.search(Key(name) >= lo).search(Key(name) <= hi)
-        else:
-            result = result.search(Key(name) == value)
-    return result
+import h5py
 
 
 def locate(entity):
-    """Mode-A locators from entity metadata: path_*/dataset_*/index_*/globus_*.
+    """Parse the Mode-A locators register.py stamps on every entity.
 
-    Use these to open the source files directly (h5py, Globus) without
-    pulling bytes through Tiled.
+    Returns ``{artifact_type: {"file": rel_path, "dataset": h5_path,
+    "index": row_or_None}}`` parsed from the ``path_*``/``dataset_*``/
+    ``index_*`` metadata keys. Table (pointer) entities carry no artifact
+    locators; for them the entity metadata — sidecar columns plus rendered
+    locator columns such as ``globus_url`` — is returned verbatim.
     """
-    return {
-        k: v for k, v in entity.metadata.items()
-        if k.startswith(_LOCATOR_PREFIXES)
-    }
+    md = dict(entity.metadata)
+    out = {}
+    for k, v in md.items():
+        if k.startswith("path_"):
+            out.setdefault(k[len("path_"):], {})["file"] = v
+        elif k.startswith("dataset_"):
+            out.setdefault(k[len("dataset_"):], {})["dataset"] = v
+        elif k.startswith("index_"):
+            out.setdefault(k[len("index_"):], {})["index"] = v
+    for loc in out.values():
+        loc.setdefault("index", None)
+    return out if out else md
 
 
-def fetch(entity, artifact_key, slc=None):
-    """Read one artifact (optionally sliced) as a numpy array.
+def load(entity, artifact_type, base_dir, slc=None):
+    """Read one artifact directly with h5py (Mode A), honoring batched index.
 
-    The server reads only the requested bytes (lazy adapter), so slicing a
-    huge array is cheap.
+    ``base_dir`` is the dataset YAML's source directory (the locators' file
+    paths are relative to it). ``index`` is set only for batch-source
+    artifacts: the artifact is row ``index`` along axis 0 of the HDF5
+    dataset, so it must be applied BEFORE the user slice — getting that
+    order wrong is the classic copy-paste bug this function exists to own.
     """
-    arr = entity[artifact_key]
-    return arr.read(slc) if slc is not None else arr.read()
-
-
-def export_entity(entity):
-    """Whole entity (all artifacts + metadata as attrs) as HDF5 file bytes.
-
-    Single round trip; no server byte cap. Write the result to disk and open
-    with h5py.
-    """
-    buf = io.BytesIO()
-    entity.export(buf, format="application/x-hdf5")
-    return buf.getvalue()
+    loc = locate(entity)[artifact_type]
+    with h5py.File(os.path.join(base_dir, loc["file"]), "r", locking=False) as f:
+        ds = f[loc["dataset"]]
+        if loc["index"] is not None:
+            row = ds[int(loc["index"])]
+            return row[slc] if slc is not None else row
+        return ds[slc] if slc is not None else ds[...]

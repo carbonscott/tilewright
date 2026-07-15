@@ -1,185 +1,214 @@
-# tcb-min — Dataset Onboarding Guide
+# tcb-min — Dataset Onboarding Guide (contract v2)
 
 ## What this is
 
 tcb-min is a minimal broker that registers multi-modal scientific HDF5
 datasets into a [Tiled](https://blueskyproject.io/tiled/) catalog without
 copying any data: files are referenced in place, and physics parameters
-become server-side queryable metadata. You describe a dataset once in a small
-YAML file, generate two Parquet manifests from it, and register those
+become server-side queryable metadata. You describe a dataset once in a
+small YAML file, generate two Parquet manifests from it, and register those
 manifests into a running Tiled server over HTTP. The hierarchy is
 **Dataset** (container with provenance metadata) → **Entity** (container
-whose metadata is the physics parameters) → **Artifact** (array child served
-lazily from the source HDF5 file).
+whose metadata is the physics parameters) → **Artifact** (array child
+served lazily from the source HDF5 file).
 
-Everything is explicit. The YAML is the contract; nothing about your data is
-guessed. If the YAML doesn't say it, it doesn't happen.
+Everything is explicit. The YAML is the contract; nothing about your data
+is guessed. If the YAML doesn't say it, it doesn't happen. Invalid YAML
+prints **every** error in plain language and exits 1 — no type coercion,
+exact types or fail loud.
 
 ## Prerequisites
 
-You are on a host that can see the data (e.g. sdfiana025). Always export the
-uv cache first, and run everything from the repo root:
+You are on a host that can see the data (e.g. sdfiana025). Always export
+the uv cache first, and run everything from the repo root:
 
 ```bash
 cd /sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/codes/tcb-min
 export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE
-uv sync          # once, creates .venv with tiled 0.2.9 + deps
+uv sync          # once, creates .venv with tiled 0.2.x + deps
 ```
 
 ## The dataset YAML contract — field by field
 
+Exactly four top-level keys are allowed: `key`, `metadata`, `source`,
+`artifacts`. Unknown keys are rejected (typos fail loudly).
+
 ```yaml
-key: MY_DATASET            # required
-label: "My Dataset"        # optional
-metadata:                  # required; data_type required, everything else open
+key: MY_DATASET            # required: Tiled key of the dataset container
+metadata:                  # required: free-form dict; data_type required
   data_type: experimental
-data:                      # required
-  directory: /abs/path
-  layout: per_entity       # per_entity | batched | pointer
-  file_pattern: "*.h5"     # per_entity/batched only (required there)
-  sidecar: table.parquet   # pointer only (required there)
-parameters:                # required
-  location: root_attributes  # root_scalars | root_attributes | group | sidecar
-  group: /params           # required iff location == group
-artifacts:                 # required; min 1 unless layout == pointer (then [])
-  - {type: spectrum, dataset: /spectra}
-shared: []                 # optional; per_entity/batched only
-extra_metadata: []         # optional; per_entity/batched only
-locator: {}                # optional; pointer only
-provenance: {}             # optional; free-form dict
+source:                    # required: TAGGED UNION — exactly ONE of the three
+  files:  {...}            #   one matched file = one entity
+  batch:  {...}            #   entities stacked along axis 0 inside each file
+  table:  {...}            #   sidecar Parquet rows ARE the entities
+artifacts:                 # required (min 1) for files/batch;
+  - {type: spectrum, dataset: /spectra}   # absent or [] for table
 ```
 
-Unknown top-level keys are **rejected** (typos fail loudly).
-
 ### `key` (string, required)
-The Tiled key of the dataset container, e.g. `BROAD_SIGMA`. Entity keys are
-derived from it: `{key}_{uid[:13]}`.
 
-### `label` (string, optional)
-Human-readable name. Informational only.
+The Tiled key of the dataset container, e.g. `BROAD_SIGMA`. Entity keys are
+derived from it: `{key}_{uid[:13]}` where `uid` is a provenance hash (see
+"Entity identity" below).
 
 ### `metadata` (mapping, required)
+
 Becomes the dataset container's metadata verbatim. `data_type` is the only
 required field (typical values: `experimental`, `simulation`, `benchmark`).
 Add anything else that describes provenance: `material`, `method`,
-`facility`, `producer`, `instrument`, `pi`, ...
+`facility`, `producer`, `instrument`, `pi`, ... Axes/grids shared by all
+entities (an energy-loss axis, omega bounds) are just entries you write
+here yourself, e.g. `shared_eloss: /eloss` — a client fetches them once via
+h5py from any source file. There is no special mechanism for them.
 
-### `data` (mapping, required)
-- `directory` — absolute path to the dataset root. All `file` columns in the
-  manifests are relative to it, and registration builds asset URIs as
-  `file://localhost{directory}/{file}`. The **server's** `config.yml` must
-  list this directory (or a parent) under `readable_storage`, or reads will
-  be refused.
-- `layout` — one of:
-  - `per_entity` — **one file = one entity**. Each matched file yields one
-    entity; every artifact dataset must exist in every file.
-  - `batched` — **entities are rows along axis 0** of stacked datasets, in
-    one or more files. If `/spectra` is `(2000, 151, 40)`, that file holds
-    2000 entities and entity *i*'s artifact is `spectra[i]` with shape
-    `(151, 40)`. Row indices reset per file; the `file` column disambiguates.
-  - `pointer` — **no locally readable artifact bytes** (files are elsewhere,
-    e.g. Globus, or in a non-HDF5 format). Entities come from a sidecar
-    Parquet table, one row per entity; there are zero array children and
-    all access goes through locator metadata.
-- `file_pattern` — glob relative to `directory`, required for
-  per_entity/batched, forbidden for pointer. Make it exclude non-HDF5
-  siblings (e.g. use `*.h5` when the dir also holds `.nc`/`.csv` twins;
-  use `*/simulations.h5` to match one file per subdirectory).
-- `sidecar` — Parquet filename relative to `directory`, required for
-  pointer, forbidden otherwise.
+### `source` (mapping, required) — the tagged union
 
-### `parameters` (mapping, required)
-Where the per-entity physics parameters live. Open one data file (or the
-sidecar) and look at where the numbers actually are:
+Exactly one of `files`, `batch`, `table`. Each tag owns only its own keys;
+an illegal combination is unrepresentable, not merely rejected.
 
-- `root_scalars` — 0-dimensional datasets at the HDF5 root
-  (`f["/Ja_meV"][()]`). per_entity only.
-- `root_attributes` — attributes on the HDF5 root (`f.attrs`). 1-element
-  arrays are unwrapped to scalars; bytes are decoded to str. per_entity only.
-- `group` — datasets under `parameters.group`. For per_entity each is read
-  as a scalar; for batched each must be a `(N,)` dataset whose row *i*
-  belongs to entity *i*. `group` (the HDF5 path, e.g. `/params`) is required
-  with this location and forbidden with the others.
-- `sidecar` — every column of the sidecar Parquet is a parameter. pointer
-  only (and pointer requires exactly this location).
+**`source.files`** — per-entity: one matched file = one entity.
 
-Valid combinations: per_entity × {root_scalars, root_attributes, group};
-batched × {group}; pointer × {sidecar}. Anything else is rejected at
-validation time.
+```yaml
+source:
+  files:
+    directory: /abs/path        # dataset root; file columns are relative to it
+    pattern: "*.h5"             # glob relative to directory
+    params: {group: "/", from: attrs}
+```
 
-### `artifacts` (list, required)
-The arrays to serve, `{type, dataset}` each. `type` becomes the Tiled key of
-the array child (e.g. `client[KEY][entity_key]["rixs_spectrum"]`), `dataset`
-is the HDF5 path inside each file. Minimum 1 entry — except pointer layout,
-which must have `artifacts: []`. Every listed dataset must exist in every
-matched file (missing → hard error).
+- `directory` (string, required) — absolute path. Registration builds asset
+  URIs as `file://localhost{directory}/{file}`, and the **server's**
+  `config.yml` must list this directory (or a parent) under
+  `readable_storage` or reads will be refused.
+- `pattern` (string, required) — glob relative to `directory`. Make it
+  exclude non-HDF5 siblings (e.g. `*.h5` when the dir also holds `.nc`
+  twins; `*/simulations.h5` to match one file per subdirectory).
+- `params` (mapping, required) — where the per-entity physics parameters
+  live inside each file. Two keys, both required:
+  - `group` — the HDF5 group to look in (`"/"` for the root, `/params`
+    for a named group).
+  - `from` — one of exactly two values:
+    - `attrs` — parameters are HDF5 **attributes** on that group
+      (`f[group].attrs`).
+    - `datasets` — parameters are **0-dimensional datasets** directly
+      under that group (`f[group]["Ja_meV"][()]`). Non-scalar datasets
+      under the group (e.g. your artifact arrays at `/`) are not params.
 
-### `shared` (list, optional; per_entity/batched)
-Axes/grids identical across entities, `{type, dataset}` each. They are NOT
-registered as arrays; they surface as `shared_dataset_<type>` locator strings
-on the **dataset** container metadata so a client can fetch them once via
-h5py from any source file.
+**`source.batch`** — entities are rows along axis 0 inside each matched file.
 
-### `extra_metadata` (list, optional; per_entity/batched)
-Per-entity values that should ride along as entity metadata but are
-**excluded from the uid hash** (e.g. derived quantities like `/log_probs`).
-One `{dataset: /path}` per entry; the column is named after the last path
-segment. For batched, the dataset must be `(N,)`-aligned with the entities.
+```yaml
+source:
+  batch:
+    directory: /abs/path
+    pattern: "*/simulations.h5"
+    params: {group: /params}
+    extra: [/log_probs]          # optional
+```
 
-### `locator` (mapping, optional; pointer only)
-`{column_name: template}` string templates rendered per sidecar row;
-`{colname}` placeholders interpolate that row's columns. Constants (no
-placeholders) are allowed. Rendered columns land in entity metadata, so a
-client can build e.g. a Globus download URL for every entity.
+- `directory`, `pattern` — as for `files`.
+- `params` (mapping, required) — only `group`. Every `(N,)` dataset under
+  that group is one param column; row *i* belongs to entity *i*. There is
+  no `from` here: batch params are always datasets.
+- `extra` (list of HDF5 paths, optional) — root datasets that are
+  axis-0-matched with the entities (`(N,)` leading axis); each becomes one
+  entity metadata column named after its last path segment (e.g.
+  `/log_probs` → column `log_probs`).
 
-### `provenance` (mapping, optional)
-Free-form dict merged into the dataset container metadata at registration
-(e.g. `created_at`, `code_commit`).
+If `/spectra` is `(2000, 151, 40)`, that file holds 2000 entities and
+entity *i*'s artifact is `spectra[i]` with shape `(151, 40)`. Row indices
+reset per file; the manifest's `file` column disambiguates.
 
-## How to decide `layout`
+**`source.table`** — passthrough: the sidecar Parquet's rows ARE the
+entities. Use it when Tiled cannot read the bytes at all (non-HDF5 format,
+or the data lives at a remote facility) but a table of per-file parameters
+exists. Zero array children; all access goes through metadata.
+
+```yaml
+source:
+  table:
+    directory: /abs/path
+    path: CNCS_srtd.parquet      # Parquet filename relative to directory
+    id: filename                 # required: column that identifies each entity
+    locator:                     # optional: rendered per row
+      globus_path: "/maiqmag/.../{filename}"
+```
+
+- `path` (string, required) — the sidecar Parquet, relative to `directory`.
+  One row per entity; every column becomes queryable entity metadata.
+- `id` (string, required) — the column whose value identifies the entity.
+  It must be unique across rows (duplicates are a hard error) and it feeds
+  the provenance uid.
+- `locator` (mapping, optional) — `{column_name: template}` string
+  templates rendered per row; `{colname}` placeholders interpolate that
+  row's columns. Constants (no placeholders) are allowed. Rendered columns
+  land in entity metadata, so a client can build e.g. a Globus download URL
+  for every entity.
+
+### `artifacts`
+
+The arrays to serve, `{type, dataset}` each. `type` becomes the Tiled key
+of the array child (`client[KEY][entity_key]["rixs_spectrum"]`); `dataset`
+is the HDF5 path inside each file. Rules:
+
+- `files` / `batch`: required, minimum 1 entry. Every listed dataset must
+  exist in every matched file (missing → hard error). For `batch`, every
+  artifact dataset's leading axis must equal N.
+- `table`: must be **absent or `[]`** — table entities have no readable
+  bytes.
+
+## Entity identity (uid)
+
+The uid is a hash of **provenance** (where the entity came from), never of
+its parameters:
+
+| source | uid |
+|---|---|
+| files | `sha256(relative_file_path)[:16]` |
+| batch | `sha256("relative_file_path:row_index")[:16]` |
+| table | `sha256(str(row[id]))[:16]` |
+
+Consequence: two files with identical params are **two entities**. That is
+correct — identity is where the data came from; params are pure queryable
+metadata and may collide freely. Regenerating a manifest is stable as long
+as file names (or table ids) don't change.
+
+## How to choose the source tag — look at the data
 
 1. Does one file correspond to one physical entity (one sample, one scan,
-   one simulation)? → `per_entity`.
-2. Are many entities stacked along axis 0 of big datasets (params as `(N,)`
-   arrays, data as `(N, ...)` arrays)? → `batched`.
-3. Can Tiled not read the bytes at all (non-HDF5 format, or data lives at a
-   remote facility) but a table of per-file parameters exists? → `pointer`.
+   one simulation)? → `files`.
+2. Are many entities stacked along axis 0 of big datasets (params as
+   `(N,)` arrays, data as `(N, ...)` arrays)? → `batch`.
+3. Can Tiled not read the bytes at all, but a Parquet of per-entity rows
+   exists? → `table`.
 
-## How to decide `parameters.location`
-
-Open one file with h5py and look:
+## How to choose `params.from` (files only) — look where the numbers live
 
 ```python
 import h5py
 f = h5py.File("sample.h5", "r")
-dict(f.attrs)                 # non-empty? -> root_attributes
-[k for k in f if f[k].shape == ()]        # 0-dim root datasets? -> root_scalars
-list(f["/params"])            # a group of named param datasets? -> group
+dict(f.attrs)                              # non-empty? -> {group: "/", from: attrs}
+[k for k in f if f[k].shape == ()]         # 0-dim root datasets? -> {group: "/", from: datasets}
+list(f["/params"])                         # named group of scalars? -> {group: /params, from: datasets}
 ```
 
-For pointer layouts, the parameters are the columns of the sidecar Parquet →
-`sidecar`.
+## Worked example 1 — files (LCLS RIXS static scans)
 
-## Worked example 1 — per_entity (LCLS RIXS static scans)
-
-Directory `/sdf/.../data-source/LS/static` holds `S_52.h5` (plus a `.nc` twin
-that must be excluded). Params are root attributes (`twotheta`, `chi`, ...);
-the 9 root datasets are all artifacts.
+Directory `/sdf/.../data-source/LS/static` holds `S_52.h5` (plus a `.nc`
+twin that must be excluded). Params are root attributes (`twotheta`,
+`chi`, ...); the 9 root datasets are all artifacts.
 
 ```yaml
 key: LCLS_RIXS_STATIC
-label: "LCLS RIXS Static"
 metadata:
   data_type: experimental
   material: NiPS3
   method: RIXS
   facility: LCLS
-data:
-  directory: /sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/LS/static
-  layout: per_entity
-  file_pattern: "*.h5"
-parameters:
-  location: root_attributes
+source:
+  files:
+    directory: /sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/LS/static
+    pattern: "*.h5"
+    params: {group: "/", from: attrs}
 artifacts:
   - {type: I0, dataset: /I0}
   - {type: I_rn, dataset: /I_rn}
@@ -194,7 +223,7 @@ artifacts:
 
 Expected: `entities=1 artifacts=9`.
 
-## Worked example 2 — batched (RIXS simulation sweep)
+## Worked example 2 — batch (RIXS simulation sweep)
 
 Directory `/sdf/.../data-source/RIXS_SIM_BROAD_SIGMA` holds
 `batch_0/simulations.h5` ... `batch_4/simulations.h5`. Each file:
@@ -203,56 +232,48 @@ Directory `/sdf/.../data-source/RIXS_SIM_BROAD_SIGMA` holds
 
 ```yaml
 key: BROAD_SIGMA
-label: "Broad Sigma"
 metadata:
   data_type: simulation
   material: NiPS3
-data:
-  directory: /sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/RIXS_SIM_BROAD_SIGMA
-  layout: batched
-  file_pattern: "*/simulations.h5"
-parameters:
-  location: group
-  group: /params
+  shared_eloss: /eloss            # plain metadata: shared axes are entries
+  shared_omega_bounds: /omega_bounds   # the author writes, nothing more
+source:
+  batch:
+    directory: /sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/RIXS_SIM_BROAD_SIGMA
+    pattern: "*/simulations.h5"
+    params: {group: /params}
+    extra: [/log_probs]
 artifacts:
   - {type: rixs_spectrum, dataset: /spectra}
-shared:
-  - {type: eloss, dataset: /eloss}
-  - {type: omega_bounds, dataset: /omega_bounds}
-extra_metadata:
-  - dataset: /log_probs
 ```
 
 Expected: `entities=10000 artifacts=10000` (each artifact served as
 `(151, 40)` float64).
 
-## Worked example 3 — pointer (CNCS incident-beam, Globus-hosted)
+## Worked example 3 — table (CNCS incident-beam, Globus-hosted)
 
-Directory `/sdf/.../data-source/19g/mcstas_incident_beam/cncs_new` holds 100
-`.mcpl.gz` event files (not Tiled-readable) plus `CNCS_srtd.parquet` — 100
-rows × 10 columns (`Ei, resmode, speed1..speed5, Instr, T0, filename`).
+Directory `/sdf/.../data-source/19g/mcstas_incident_beam/cncs_new` holds
+100 `.mcpl.gz` event files (not Tiled-readable) plus `CNCS_srtd.parquet` —
+100 rows × 10 columns (`Ei, resmode, speed1..speed5, Instr, T0, filename`).
 
 ```yaml
 key: CNCS_incident_beam
-label: "CNCS Incident Beam (McStas, SNS/ORNL)"
 metadata:
   data_type: simulation
   producer: McStas
   facility: SNS/ORNL
   instrument: CNCS
   pi: "G. E. Granroth"
-data:
-  directory: /sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/19g/mcstas_incident_beam/cncs_new
-  layout: pointer
-  sidecar: CNCS_srtd.parquet
-parameters:
-  location: sidecar
-artifacts: []
-locator:
-  mcpl_filename: "{filename}"
-  globus_endpoint: "ee51784b-3173-4ff2-bab5-38c4bd867d02"
-  globus_path: "/maiqmag/19g/mcstas_incident_beam/cncs_new/{filename}"
-  globus_url: "https://app.globus.org/file-manager?origin_id=ee51784b-3173-4ff2-bab5-38c4bd867d02&origin_path=/maiqmag/19g/mcstas_incident_beam/cncs_new/{filename}"
+source:
+  table:
+    directory: /sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/19g/mcstas_incident_beam/cncs_new
+    path: CNCS_srtd.parquet
+    id: filename
+    locator:
+      mcpl_filename: "{filename}"
+      globus_endpoint: "ee51784b-3173-4ff2-bab5-38c4bd867d02"
+      globus_path: "/maiqmag/19g/mcstas_incident_beam/cncs_new/{filename}"
+      globus_url: "https://app.globus.org/file-manager?origin_id=ee51784b-3173-4ff2-bab5-38c4bd867d02&origin_path=/maiqmag/19g/mcstas_incident_beam/cncs_new/{filename}"
 ```
 
 Expected: `entities=100 artifacts=0`. Each entity's metadata carries its
@@ -265,7 +286,8 @@ All from the repo root, with `UV_CACHE_DIR` exported (see Prerequisites).
 **1. Validate the contract only (touches no data):**
 ```bash
 uv run python -m tcb_min.manifest datasets/my_dataset.yml --check
-# -> contract OK: key=... layout=... location=... artifacts=N
+# -> contract OK: key=... source=files|batch|table artifacts=N
+# invalid -> every error printed ("source.table requires 'id' ..."), exit 1
 ```
 
 **2. Generate manifests:**
@@ -273,10 +295,10 @@ uv run python -m tcb_min.manifest datasets/my_dataset.yml --check
 uv run python -m tcb_min.manifest datasets/my_dataset.yml -o manifests/MY_DATASET
 # -> dataset=MY_DATASET entities=N artifacts=M -> manifests/MY_DATASET/...
 ```
-This writes `entities.parquet` (uid + one column per parameter [+ extras,
-locators]) and `artifacts.parquet`
-(`uid,type,file,dataset,index,shape,dtype,file_size,file_mtime`). Shape and
-dtype are captured now; registration never opens HDF5.
+This writes `entities.parquet` (uid + one column per parameter [+ extra,
+locator columns]) and `artifacts.parquet`
+(`uid,type,file,dataset,index,shape,dtype`; empty-but-typed for table
+sources). Shape and dtype are captured now; registration never opens HDF5.
 
 **3. Start the server** (its own terminal; leave it running):
 ```bash
@@ -292,33 +314,83 @@ uv run python -m tcb_min.register datasets/my_dataset.yml \
     --manifests manifests/MY_DATASET --url http://localhost:8017 --api-key tcbmin
 # -> dataset=MY_DATASET entities_added=N artifacts_added=M skipped=0 failed=0
 ```
-Re-running is safe: already-registered entities are counted as `skipped`.
+Re-running is safe: an already-complete entity counts as `skipped`. An
+entity whose array-children count disagrees with the manifest (a crashed
+earlier run) prints a loud WARNING and counts as `failed` — delete it and
+re-register.
+
+**5. Tests:**
+```bash
+uv run --with pytest pytest tests/ -v     # offline: corpus counts + budgets
+uv run python tests/verify_live.py        # manual: needs the server running
+```
+
+## Using the catalog — raw tiled cheat sheet
+
+tiled's client IS the client; tcb-min adds nothing on the HTTP path.
+
+```python
+from tiled.client import from_uri
+from tiled.queries import Key
+
+c = from_uri("http://localhost:8017", api_key="tcbmin")
+list(c)                                   # dataset keys
+dict(c["BROAD_SIGMA"].metadata)           # dataset provenance metadata
+ds = c["BROAD_SIGMA"]
+len(ds)                                   # entity count
+
+# SQL-served metadata queries (Key comparisons only; never Regex):
+hits = ds.search(Key("sigma") >= 0.04).search(Key("sigma") <= 0.05)
+hits = hits.search(Key("gamma") == 0.1)   # chain freely
+ent = hits.values().first()
+dict(ent.metadata)                        # physics params + Mode-A locators
+
+# Sliced reads — the server reads only the requested bytes:
+arr = ent["rixs_spectrum"]
+arr.shape                                 # (151, 40)
+arr[0:5, :]                               # numpy array, lazy adapter
+
+# Bulk export — whole entity as one HDF5 blob, single round trip:
+import io
+buf = io.BytesIO()
+ent.export(buf, format="application/x-hdf5")
+open("entity.h5", "wb").write(buf.getvalue())
+```
+
+## Mode A — direct h5py access (same-filesystem readers)
+
+Every registered entity carries `path_<type>` / `dataset_<type>` /
+`index_<type>` locator metadata. `tcb_min.client` parses it and does the
+one non-trivial read (batched row index before user slice):
+
+```python
+from tiled.client import from_uri
+from tiled.queries import Key
+from tcb_min import client as tcb
+
+c = from_uri("http://localhost:8017", api_key="tcbmin")
+ent = c["BROAD_SIGMA"].search(Key("sigma") >= 0.04).values().first()
+tcb.locate(ent)      # {"rixs_spectrum": {"file": ..., "dataset": ..., "index": ...}}
+base = "/sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/RIXS_SIM_BROAD_SIGMA"
+spec = tcb.load(ent, "rixs_spectrum", base)          # (151, 40), pure h5py
+row0 = tcb.load(ent, "rixs_spectrum", base, slc=(0, slice(None)))
+
+# Table (pointer) entities have no artifact locators; locate() returns the
+# entity metadata verbatim (sidecar columns + rendered locator columns):
+cn = c["CNCS_incident_beam"].values().first()
+tcb.locate(cn)["globus_url"]
+```
 
 ## Verify
 
 ```bash
 uv run python - <<'EOF'
-from tcb_min import client as tcb
-c = tcb.connect("http://localhost:8017", api_key="tcbmin")
+from tiled.client import from_uri
+c = from_uri("http://localhost:8017", api_key="tcbmin")
 print(list(c))                          # dataset keys
 ds = c[list(c)[0]]
 ent = ds.values().first()
 print(dict(ent.metadata))               # physics params + locators
-print({k: e.read().shape for k, e in ent.items()} if len(ent) else tcb.locate(ent))
+print({k: ent[k].shape for k in ent} if len(ent) else "pointer-only entity")
 EOF
 ```
-
-Query and fetch (Mode B), all server-side:
-
-```python
-from tcb_min import client as tcb
-c = tcb.connect("http://localhost:8017", api_key="tcbmin")
-hits = tcb.find(c, "BROAD_SIGMA", sigma=(0.04, 0.05))   # SQL-backed range query
-ent = hits.values().first()
-spec = tcb.fetch(ent, "rixs_spectrum")                   # (151, 40) numpy array
-blob = tcb.export_entity(ent)                            # whole entity as HDF5 bytes
-```
-
-For Mode A (direct h5py access) use `tcb.locate(ent)` — it returns the
-`path_<type>` / `dataset_<type>` / `index_<type>` (and for pointer datasets
-`globus_*`) locator metadata; join `path_*` with the dataset `directory`.

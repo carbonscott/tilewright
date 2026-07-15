@@ -105,3 +105,46 @@ grouped layout (no users) · tcb CLI 617 LOC (runnable modules instead) · bulk_
 · vocab/catalog_model.yml soft-normalization layer (ADR-0003 preserved as idea, dropped as code)
 · inspect.py heuristics (already dead) · tiled_cache.py · config.py env indirection ·
 utils.get_artifact_info register-time h5py (moved to generate time).
+
+
+## v2 (2026-07-15) — post-critique refactor
+
+Integrated persona critique (karpathy + geohot) applied. Where the sections
+above disagree with this list, **v2 wins**.
+
+1. **Contract is a tagged union.** Top-level keys: `key, metadata, source,
+   artifacts` — nothing else (`label`, `shared`, `extra_metadata`,
+   `provenance`, `locator`, `data`, `parameters` are gone as top-level
+   concepts). `source` holds exactly one of `files | batch | table`, each
+   owning only its keys — illegal layout×location combos are
+   unrepresentable, not validated away. The old `location` enum split into
+   two orthogonal bits: `params: {group, from: attrs|datasets}` (files);
+   batch params are always datasets under `params.group`. `batch.extra`
+   keeps the `/log_probs` use-case. `table` (ex-pointer) is manifest
+   passthrough: sidecar rows ARE the entities; requires `id` (unique
+   column); optional `locator` `{col}` templates are KEPT (provider
+   sidecars are read-only here — we can't demand precomputed columns).
+   Shared axes are plain `metadata:` entries the author writes.
+2. **No pydantic.** Explicit checks in manifest.py; ALL errors collected
+   then printed in domain language, exit(1); no type coercion.
+3. **uid = provenance hash**, not param hash: files → sha256(rel_path);
+   batch → sha256("rel_path:row"); table → sha256(str(row[id])); [:16].
+   Rounding/sorting/canonicalization machinery deleted. Identical params in
+   two files = two entities (correct). Entity key stays `{key}_{uid[:13]}`.
+4. **Artifact manifest columns**: `uid,type,file,dataset,index,shape,dtype`
+   — `file_size`/`file_mtime` CUT (staleness is caught at read time by the
+   adapter's shape/dtype validation, the check that actually fires).
+5. **register.py**: mechanism unchanged (external DataSource, broker
+   mimetype, ThreadPool 8, `path_/dataset_/index_<type>` Mode-A locators).
+   Half-registered entities are no longer silently skipped: existing key →
+   compare array-children count to the manifest's; mismatch → loud warning
+   + counted under failed.
+6. **client.py is Mode A only**: `locate()` + `load()` (batched-index-aware
+   direct h5py). The wrapper verbs (`connect/datasets/find/fetch/
+   export_entity`) are deleted; the module docstring teaches raw tiled
+   (`from_uri`, `Key` search, slicing, export) instead of aliasing it.
+7. **Budgets are tests**: `tests/test_smoke.py` runs offline — proof-corpus
+   counts as a fixture table, total tcb_min/*.py LOC ≤ 700, contract
+   top-level key set frozen at 4. `tests/verify_live.py` (manual) checks a
+   served slice against direct h5py — the reference implementation.
+8. **pyproject**: pydantic dependency removed.

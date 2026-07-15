@@ -1,6 +1,6 @@
 [project]
 name = "tcb-min"
-version = "0.1.0"
+version = "0.2.0"
 description = "Minimal Tiled catalog broker: YAML contract -> Parquet manifests -> HTTP registration"
 requires-python = ">=3.11"
 dependencies = [
@@ -10,7 +10,6 @@ dependencies = [
     "pandas",
     "pyarrow",
     "PyYAML",
-    "pydantic>=2",
 ]
 
 [build-system]

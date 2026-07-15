@@ -2614,14 +2614,13 @@ wheels = [
 
 [[package]]
 name = "tcb-min"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "h5py" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "pyarrow" },
-    { name = "pydantic" },
     { name = "pyyaml" },
     { name = "tiled", extra = ["server"] },
 ]
@@ -2632,7 +2631,6 @@ requires-dist = [
     { name = "numpy" },
     { name = "pandas" },
     { name = "pyarrow" },
-    { name = "pydantic", specifier = ">=2" },
     { name = "pyyaml" },
     { name = "tiled", extras = ["server"], specifier = ">=0.2.9,<0.3" },
 ]
