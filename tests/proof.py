@@ -1,4 +1,4 @@
-"""Acceptance proof for tcb_min v2 — raw tiled API against 127.0.0.1:8017.
+"""Acceptance proof for tilewright v2 — raw tiled API against 127.0.0.1:8017.
 
 Run: uv run python tests/proof.py
 Prints labeled blocks L1-L6 (L7 is tests/verify_live.py, run separately).
@@ -11,7 +11,7 @@ import h5py
 from tiled.client import from_uri
 from tiled.queries import Key
 
-from tcb_min.client import locate
+from tilewright.client import locate
 
 client = from_uri("http://127.0.0.1:8017", api_key="tcbmin")
 
@@ -44,7 +44,7 @@ print(f"  Ei={cn.metadata['Ei']}")
 print(f"  len(list(entity))==0: {len(list(cn)) == 0}")
 bs_key = next(iter(client["BROAD_SIGMA"]))
 bs_ent = client["BROAD_SIGMA"][bs_key]
-print(f"tcb_min.client.locate(BROAD_SIGMA[{bs_key}]):")
+print(f"tilewright.client.locate(BROAD_SIGMA[{bs_key}]):")
 print(f"  {locate(bs_ent)}")
 
 print("=== L5 slicing read (server slices before serializing) ===")

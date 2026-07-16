@@ -1,4 +1,4 @@
-"""tcb_min.client — Mode A only: find an entity's source files and read them
+"""tilewright.client — Mode A only: find an entity's source files and read them
 directly with h5py, bypassing the Tiled byte path.
 
 For everything else, tiled's own client IS the client — do not wrap it:

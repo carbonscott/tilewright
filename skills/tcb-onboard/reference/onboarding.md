@@ -1,8 +1,8 @@
-# tcb-min — Dataset Onboarding Guide (contract v2)
+# tilewright — Dataset Onboarding Guide (contract v2)
 
 ## What this is
 
-tcb-min is a minimal broker that registers multi-modal scientific HDF5
+tilewright is a minimal broker that registers multi-modal scientific HDF5
 datasets into a [Tiled](https://blueskyproject.io/tiled/) catalog without
 copying any data: files are referenced in place, and physics parameters
 become server-side queryable metadata. You describe a dataset once in a
@@ -362,14 +362,14 @@ All from the repo root, with `UV_CACHE_DIR` exported (see Prerequisites).
 
 **1. Validate the contract only (touches no data):**
 ```bash
-uv run tcb manifest examples/datasets/my_dataset.yml --check
+uv run tilewright manifest examples/datasets/my_dataset.yml --check
 # -> contract OK: key=... source=files|batch|table artifacts=N
 # invalid -> every error printed ("source.table requires 'id' ..."), exit 1
 ```
 
 **2. Generate manifests:**
 ```bash
-uv run tcb manifest examples/datasets/my_dataset.yml -o examples/manifests/MY_DATASET
+uv run tilewright manifest examples/datasets/my_dataset.yml -o examples/manifests/MY_DATASET
 # -> dataset=MY_DATASET entities=N artifacts=M -> examples/manifests/MY_DATASET/...
 ```
 This writes `entities.parquet` (uid + one column per parameter [+ extra,
@@ -389,7 +389,7 @@ restart.
 
 **4. Register:**
 ```bash
-uv run tcb register examples/datasets/my_dataset.yml \
+uv run tilewright register examples/datasets/my_dataset.yml \
     --manifests examples/manifests/MY_DATASET --url http://localhost:8017 --api-key tcbmin
 # -> dataset=MY_DATASET entities_added=N artifacts_added=M skipped=0 failed=0
 ```
@@ -423,7 +423,7 @@ involved. Decode the common ones here before changing anything else:
 
 ## Using the catalog — raw tiled cheat sheet
 
-tiled's client IS the client; tcb-min adds nothing on the HTTP path.
+tiled's client IS the client; tilewright adds nothing on the HTTP path.
 
 ```python
 from tiled.client import from_uri
@@ -456,25 +456,25 @@ open("entity.h5", "wb").write(buf.getvalue())
 ## Mode A — direct h5py access (same-filesystem readers)
 
 Every registered entity carries `path_<type>` / `dataset_<type>` /
-`index_<type>` locator metadata. `tcb_min.client` parses it and does the
+`index_<type>` locator metadata. `tilewright.client` parses it and does the
 one non-trivial read (batched row index before user slice):
 
 ```python
 from tiled.client import from_uri
 from tiled.queries import Key
-from tcb_min import client as tcb
+from tilewright import client as tw
 
 c = from_uri("http://localhost:8017", api_key="tcbmin")
 ent = c["BROAD_SIGMA"].search(Key("sigma") >= 0.04).values().first()
-tcb.locate(ent)      # {"rixs_spectrum": {"file": ..., "dataset": ..., "index": ...}}
+tw.locate(ent)      # {"rixs_spectrum": {"file": ..., "dataset": ..., "index": ...}}
 base = "/sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/RIXS_SIM_BROAD_SIGMA"
-spec = tcb.load(ent, "rixs_spectrum", base)          # (151, 40), pure h5py
-row0 = tcb.load(ent, "rixs_spectrum", base, slc=(0, slice(None)))
+spec = tw.load(ent, "rixs_spectrum", base)          # (151, 40), pure h5py
+row0 = tw.load(ent, "rixs_spectrum", base, slc=(0, slice(None)))
 
 # Table (pointer) entities have no artifact locators; locate() returns the
 # entity metadata verbatim (sidecar columns + rendered locator columns):
 cn = c["CNCS_incident_beam"].values().first()
-tcb.locate(cn)["globus_url"]
+tw.locate(cn)["globus_url"]
 ```
 
 ## Verify

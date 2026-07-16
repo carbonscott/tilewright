@@ -2613,29 +2613,6 @@ wheels = [
 ]
 
 [[package]]
-name = "tcb-min"
-version = "0.3.0"
-source = { editable = "." }
-dependencies = [
-    { name = "h5py" },
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "pyarrow" },
-    { name = "pyyaml" },
-    { name = "tiled", extra = ["server"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "h5py" },
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "pyarrow" },
-    { name = "pyyaml" },
-    { name = "tiled", extras = ["server"], specifier = ">=0.2.9,<0.3" },
-]
-
-[[package]]
 name = "tenacity"
 version = "9.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -2766,6 +2743,29 @@ server = [
     { name = "zarr", version = "3.1.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "zarr", version = "3.2.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "zstandard" },
+]
+
+[[package]]
+name = "tilewright"
+version = "0.3.0"
+source = { editable = "." }
+dependencies = [
+    { name = "h5py" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pyarrow" },
+    { name = "pyyaml" },
+    { name = "tiled", extra = ["server"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "h5py" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pyarrow" },
+    { name = "pyyaml" },
+    { name = "tiled", extras = ["server"], specifier = ">=0.2.9,<0.3" },
 ]
 
 [[package]]

@@ -1,12 +1,12 @@
-"""tcb_min.cli — the unified `tcb` command.
+"""tilewright.cli — the unified `tilewright` command.
 
-A thin dispatcher: `tcb manifest ...` and `tcb register ...` forward the
-remaining arguments to tcb_min.manifest / tcb_min.register, each of which
-parses and documents its own options (`tcb manifest --help`)."""
+A thin dispatcher: `tilewright manifest ...` and `tilewright register ...` forward
+the remaining arguments to tilewright.manifest / tilewright.register, each of which
+parses and documents its own options (`tilewright manifest --help`)."""
 
 import sys
 
-from tcb_min import manifest, register
+from tilewright import manifest, register
 
 COMMANDS = {
     "manifest": (manifest.main, "validate a dataset YAML and generate Parquet manifests"),
@@ -16,8 +16,8 @@ COMMANDS = {
 
 def _usage():
     rows = "\n".join(f"  {name:<9}{help_}" for name, (_, help_) in COMMANDS.items())
-    return (f"usage: tcb <command> [options]\n\ncommands:\n{rows}\n\n"
-            "Run `tcb <command> --help` for command-specific options.")
+    return (f"usage: tilewright <command> [options]\n\ncommands:\n{rows}\n\n"
+            "Run `tilewright <command> --help` for command-specific options.")
 
 
 def main(argv=None):
@@ -27,7 +27,7 @@ def main(argv=None):
         return 0 if argv else 2
     cmd, rest = argv[0], argv[1:]
     if cmd not in COMMANDS:
-        sys.stderr.write(f"tcb: unknown command {cmd!r}\n\n{_usage()}\n")
+        sys.stderr.write(f"tilewright: unknown command {cmd!r}\n\n{_usage()}\n")
         return 2
     return COMMANDS[cmd][0](rest)
 

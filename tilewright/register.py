@@ -1,4 +1,4 @@
-"""tcb_min.register — manifests + YAML -> HTTP registration into Tiled.
+"""tilewright.register — manifests + YAML -> HTTP registration into Tiled.
 
 Registers Dataset -> Entity -> Artifact over HTTP against a running Tiled
 server; HDF5 files are referenced in place (Management.external), shape and
@@ -22,7 +22,7 @@ from tiled.structures.array import ArrayStructure, BuiltinDtype
 from tiled.structures.core import StructureFamily
 from tiled.structures.data_source import Asset, DataSource, Management
 
-from tcb_min.manifest import load_config, source_tag
+from tilewright.manifest import load_config, source_tag
 
 BROKER_MIMETYPE = "application/x-hdf5-broker"
 
@@ -134,7 +134,7 @@ def register_dataset(cfg, ent_df, art_df, url, api_key, max_workers=8):
 
 def main(argv=None):
     p = argparse.ArgumentParser(
-        prog="tcb register",
+        prog="tilewright register",
         description="Register manifests into a running Tiled server over HTTP.",
     )
     p.add_argument("yaml_path", help="dataset YAML (see the tcb-onboard skill)")

@@ -1,4 +1,4 @@
-"""Manual live verification — requires the tcb-min server on :8017 with the
+"""Manual live verification — requires the tilewright server on :8017 with the
 proof corpus registered. Not collected by pytest; run directly:
 
     uv run python tests/verify_live.py

@@ -1,10 +1,10 @@
 ---
 name: tcb-onboard
-description: Onboard a new, structure-unknown scientific dataset into a tcb-min Tiled catalog — inspect the data, choose the source archetype (files | batch | table), author and validate the dataset YAML, then generate its Parquet manifest with entity/artifact counts you predicted, and STOP before registration. Use when a dataset directory needs a tcb-min manifest and its layout is not yet described (per-file HDF5, batched HDF5, or pointer-only non-HDF5/remote data). Do NOT use for querying, reading, serving, or registering datasets already in the catalog, or for a dataset that already has a manifest.
+description: Onboard a new, structure-unknown scientific dataset into a tilewright Tiled catalog — inspect the data, choose the source archetype (files | batch | table), author and validate the dataset YAML, then generate its Parquet manifest with entity/artifact counts you predicted, and STOP before registration. Use when a dataset directory needs a tilewright manifest and its layout is not yet described (per-file HDF5, batched HDF5, or pointer-only non-HDF5/remote data). Do NOT use for querying, reading, serving, or registering datasets already in the catalog, or for a dataset that already has a manifest.
 allowed-tools: Read, Write, Edit, Bash
 ---
 
-# tcb-onboard — author a tcb-min dataset manifest
+# tcb-onboard — author a tilewright dataset manifest
 
 Onboard a dataset whose structure is **not** described: inspect it, model it in
 one dataset YAML, and generate a Parquet manifest whose counts you predicted
@@ -84,7 +84,7 @@ wrong types fail loudly at Gate A.
 ## Step 4 — Gate A: validate the contract (touches no data)
 
 ```bash
-uv run tcb manifest examples/datasets/<KEY>.yml --check
+uv run tilewright manifest examples/datasets/<KEY>.yml --check
 ```
 
 **Gate A passes only when it prints `contract OK: ...` and exits 0.** On a
@@ -104,7 +104,7 @@ them all (decode with the reference's error-triage table) and re-run until clean
 Then generate:
 
 ```bash
-uv run tcb manifest examples/datasets/<KEY>.yml -o examples/manifests/<KEY>
+uv run tilewright manifest examples/datasets/<KEY>.yml -o examples/manifests/<KEY>
 ```
 
 **Gate B passes only when the summary line
@@ -132,7 +132,7 @@ trial passed both as pointer-only yet silently lost servable arrays.)
 ## STOP
 
 Done = Gate A ✅ + Gate B ✅ + soft gate cleared. **Do not run
-`tcb register`** — registration, serving, and querying are deterministic,
+`tilewright register`** — registration, serving, and querying are deterministic,
 environment-coupled mechanics outside this skill's scope. Report back: the
 source tag chosen, the dataset YAML, and the verified `entities=/artifacts=`
 counts.
