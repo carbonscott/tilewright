@@ -63,7 +63,10 @@ def validate(raw):
     if not isinstance(src, dict):
         errors.append("top level requires 'source' (mapping with one of: files | batch | table)")
         return errors
-    _only_keys(errors, src, SOURCE_TAGS, "source")
+    _only_keys(errors, src, set(SOURCE_TAGS) | {"server_base_dir"}, "source")
+    sbd = src.get("server_base_dir")
+    if sbd is not None and not (isinstance(sbd, str) and sbd.startswith("/")):
+        errors.append("source.server_base_dir must be an absolute path — the server's own view of 'directory'")
     tags = [t for t in SOURCE_TAGS if t in src]
     if len(tags) != 1:
         errors.append("source requires exactly one of: files | batch | table")
@@ -129,6 +132,14 @@ def load_config(yaml_path):
 def source_tag(cfg):
     """The single source tag of a validated config: files | batch | table."""
     return next(t for t in SOURCE_TAGS if t in cfg["source"])
+
+
+def server_dir(cfg):
+    """Base joined with artifact 'file' for data_uri: the SERVER's view of the data root
+    (differs from 'directory' when the server mounts the same bytes elsewhere; local reads
+    keep using 'directory')."""
+    src = cfg["source"]
+    return src.get("server_base_dir") or src[source_tag(cfg)]["directory"]
 
 
 # --- generation ---
