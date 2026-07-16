@@ -34,17 +34,20 @@ code tree:
 
 `<KEY>` is the `key:` value you set inside the dataset YAML (e.g.
 `BROAD_SIGMA`). **Name the YAML file and the manifest directory after it,
-exactly** — `tilewright-register` locates both by `<KEY>` and nothing else, so
-a `broad_sigma.yml` holding `key: BROAD_SIGMA` breaks the handoff even though
-both gates pass. The worked examples you copy in step 3 predate this rule; take
-their *structure*, not their filenames.
+exactly.** Nothing enforces this — `tilewright register` takes both paths as
+explicit arguments and reads the catalog key from inside the YAML — but every
+command in **tilewright-register** is written as `.tilewright/datasets/<KEY>.yml`
+and `.tilewright/manifests/<KEY>/`, so a mismatch silently makes those
+copy-pasted commands point at files that do not exist. The shipped
+`examples/datasets/` filenames predate this convention (`broad_sigma.yml` holds
+`key: BROAD_SIGMA`); copy their *structure*, not their naming.
 
 Keeping the manifest beside the data is what lets the **tilewright-register**
 skill allowlist the data root once and never edit a config again.
 
 ```bash
 cd <tilewright repo root>        # .../codes/tilewright — once, to build the env
-export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE
+export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE   # S3DF only — omit elsewhere
 uv sync                          # once — creates .venv
 
 cd <data root>                   # then work from here

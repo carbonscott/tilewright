@@ -87,7 +87,7 @@ the data root — `--project` selects the environment and does **not** change th
 working directory:
 
 ```bash
-export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE
+export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE   # S3DF only — omit elsewhere
 uv run --project <tilewright repo root> tilewright ...
 ```
 
@@ -133,10 +133,16 @@ Both are cwd-relative; absolutizing only one silently creates a second, empty
 *narrower* path — that reintroduces the per-dataset allowlist edit this layout
 exists to delete.
 
-## Step 2 — serve (its own terminal; leave it running)
+## Step 2 — serve (background it; it must outlive this step)
+
+The server has to keep running while you register, so start it detached and
+keep its PID. A foreground `tiled serve` blocks until you kill it — there is no
+second terminal here.
 
 ```bash
-uv run --project <tilewright repo root> tiled serve config .tilewright/config.yml --api-key tcbmin 2>&1 | tee .tilewright/server.log
+nohup uv run --project <tilewright repo root> tiled serve config .tilewright/config.yml \
+    --api-key tcbmin > .tilewright/server.log 2>&1 &
+SERVER_PID=$!
 ```
 
 Creates `.tilewright/catalog.db` on first run.
@@ -149,23 +155,41 @@ already in use`, the curl answers from the impostor, registration writes into
 **its** catalog, and Gate 3 reads back somebody else's array — all three gates
 green, nothing registered where you intended.
 
-**Do not use `Application startup complete` as the signal.** Uvicorn prints it
-*before* it attempts the bind, so it appears even in a log whose very next line
-is the bind failure. The only trustworthy evidence is the **absence** of the
-error and a process that is still alive:
+Two signals lie here, and you must not build the gate on either:
+
+- **`Application startup complete` is printed *before* the bind is attempted.**
+  It appears in a healthy log and in a collided one alike — measured 1 and 1.
+  It tells you nothing.
+- **A curl answering tells you nothing either** — an impostor on the port
+  answers exactly like your server.
+
+The discriminator is **`Uvicorn running on`**, which is printed only after a
+successful bind (measured: 1 healthy, 0 collided). And you must **wait** for
+the outcome: grepping immediately races the bind and reports "clear" before
+uvicorn has even tried. Poll until the log is decisive:
 
 ```bash
-grep -q "address already in use" .tilewright/server.log \
-  && echo "PORT TAKEN — your server is NOT running; change uvicorn.port and re-serve" \
-  || echo "port clear"
-curl -s -H "Authorization: Apikey tcbmin" http://127.0.0.1:<PORT>/api/v1/metadata/ | head -c 80
+for i in $(seq 60); do
+  grep -qE "Uvicorn running on|address already in use" .tilewright/server.log && break
+  sleep 1
+done
+
+if grep -q "address already in use" .tilewright/server.log; then
+  echo "Gate 1 FAIL — port taken; your server is NOT running. Change uvicorn.port and re-serve"
+elif grep -q "Uvicorn running on" .tilewright/server.log && kill -0 $SERVER_PID 2>/dev/null; then
+  echo "Gate 1 PASS — your server owns <PORT>"
+else
+  echo "Gate 1 FAIL — server died; read .tilewright/server.log"
+fi
 ```
 
-**Gate 1 passes only when the log has no `address already in use`, the serve
-terminal is still running (it has not returned to a prompt), and the curl
-answers.** If the port was taken, nothing you do afterwards touches your own
-catalog. A restart is needed only if you edit `config.yml` — which, per the
-layout above, adding a dataset never requires.
+**Gate 1 passes only when your own log shows `Uvicorn running on`, shows no
+`address already in use`, and `$SERVER_PID` is alive.** If the port was taken,
+nothing you do afterwards touches your own catalog — and note
+`init_if_not_exists` creates `.tilewright/catalog.db` *before* the bind, so the
+DB existing is not evidence your server ever started. A restart is needed only
+if you edit `config.yml` — which, per the layout above, adding a dataset never
+requires.
 
 ## Step 3 — Gate 2: register
 

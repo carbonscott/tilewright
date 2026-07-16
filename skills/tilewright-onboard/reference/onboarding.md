@@ -24,7 +24,7 @@ environment once from the repo root:
 
 ```bash
 cd /sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/codes/tilewright
-export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE
+export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE   # S3DF only — omit elsewhere
 uv sync          # once, creates .venv with tiled 0.2.x + deps
 ```
 
@@ -381,7 +381,7 @@ physics params plus `globus_url` etc.; there are no array children.
 ## Commands
 
 All from the **data root** (the directory holding `.tilewright/`) unless a step
-says otherwise, with `UV_CACHE_DIR` exported (see Prerequisites). `--project`
+says otherwise (on S3DF, with `UV_CACHE_DIR` exported — see Prerequisites). `--project`
 points uv at the tilewright checkout for the environment; it does not change
 the working directory, so the relative paths below stay anchored to the data
 root.
