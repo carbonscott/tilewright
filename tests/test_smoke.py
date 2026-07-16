@@ -70,3 +70,23 @@ def test_contract_concept_budget():
     assert TOP_LEVEL_KEYS == {"key", "metadata", "source", "artifacts"}, (
         "contract concept creep: the allowed top-level YAML keys changed"
     )
+
+
+@pytest.mark.parametrize("skill_dir", sorted(p.name for p in (REPO / "skills").iterdir()))
+def test_skill_frontmatter(skill_dir):
+    """A skill's frontmatter is a machine contract, and it is written in prose.
+
+    An unquoted ": " anywhere in the description silently turns it into a
+    mapping and the skill stops loading — a failure no amount of proofreading
+    catches, because the text still reads correctly.
+    """
+    yaml = pytest.importorskip("yaml")
+    body = (REPO / "skills" / skill_dir / "SKILL.md").read_text()
+    assert body.startswith("---\n"), f"{skill_dir}: no YAML frontmatter"
+    meta = yaml.safe_load(body.split("---")[1])
+    assert {"name", "description", "allowed-tools"} <= set(meta), (
+        f"{skill_dir}: frontmatter missing a required key; has {sorted(meta)}"
+    )
+    assert meta["name"] == skill_dir, (
+        f"{skill_dir}: frontmatter name is {meta['name']!r}; it must match the directory"
+    )
