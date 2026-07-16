@@ -389,20 +389,20 @@ points uv at the tilewright checkout for the environment; it does not change
 the working directory, so the relative paths below stay anchored to the data
 root.
 
-`MY_DATASET` below stands for `<KEY>` — the `key:` value in the YAML. The file
-and the manifest directory are both named after it, exactly.
+`<KEY>` below is the `key:` value inside the dataset YAML (e.g. `BROAD_SIGMA`).
+Name the YAML file and the manifest directory after it, exactly.
 
 **1. Validate the contract only (touches no data):**
 ```bash
-uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/MY_DATASET.yml --check
+uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/<KEY>.yml --check
 # -> contract OK: key=... source=files|batch|table artifacts=N
 # invalid -> every error printed ("source.table requires 'id' ..."), exit 1
 ```
 
 **2. Generate manifests:**
 ```bash
-uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/MY_DATASET.yml -o .tilewright/manifests/MY_DATASET
-# -> dataset=MY_DATASET entities=N artifacts=M -> .tilewright/manifests/MY_DATASET/...
+uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/<KEY>.yml -o .tilewright/manifests/<KEY>
+# -> dataset=<KEY> entities=N artifacts=M -> .tilewright/manifests/<KEY>/...
 ```
 This writes `entities.parquet` (uid + one column per parameter [+ extra,
 locator columns]) and `artifacts.parquet`
@@ -414,7 +414,7 @@ sources). Shape and dtype are captured now; registration never opens HDF5.
 Onboarding stops at Gate B. Configuring the catalog, starting the server,
 registering the manifests, and proving an array reads back through HTTP belong
 to the **tilewright-register** skill, which begins exactly where you stop:
-`.tilewright/datasets/MY_DATASET.yml` + `.tilewright/manifests/MY_DATASET/`.
+`.tilewright/datasets/<KEY>.yml` + `.tilewright/manifests/<KEY>/`.
 
 Because `.tilewright/` sits inside the data root and that skill's config
 allowlists the data root itself, a newly onboarded dataset needs **no config

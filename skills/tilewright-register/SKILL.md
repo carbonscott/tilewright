@@ -38,7 +38,7 @@ every dataset you onboard here already sits under the data root, **a new
 dataset never needs a config change and never needs a server restart.** If you
 find yourself editing an allowlist to admit a dataset, the `.tilewright/`
 directory is in the wrong place — it belongs beside the data, not beside the
-code.
+code. The one exception is a symlinked root you cannot regenerate (see triage).
 
 One data root = one config = one catalog = **one server on its own port**.
 
@@ -142,6 +142,16 @@ Both are cwd-relative; absolutizing only one silently creates a second, empty
 *narrower* path — that reintroduces the per-dataset allowlist edit this layout
 exists to delete.
 
+**If you take that route, Gate 1's cwd check no longer applies** — it identifies
+your server *by* the cwd both values resolve against, and you have just removed
+that coupling, so it will call your own correct server an impostor. Everything
+below assumes the relative config this step writes. With an absolutized config,
+verify ownership by config path instead:
+
+```bash
+tr '\0' ' ' < /proc/$TILED_PID/cmdline    # must name THIS root's .tilewright/config.yml
+```
+
 ## Step 2 — serve (background it; it must outlive this step)
 
 The server must outlive this command, so start it detached. A foreground
@@ -188,22 +198,24 @@ serving *this* data root?** — by reading live state:
 
 ```bash
 PORT=<PORT>
-command -v ss >/dev/null || echo "Gate 1 INCONCLUSIVE — ss (iproute2) is missing; do not proceed"
-
-for i in $(seq 60); do
-  ss -lntH "sport = :$PORT" | grep -q LISTEN && break
-  sleep 1
-done
-TILED_PID=$(ss -lptnH "sport = :$PORT" | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2)
-
-if [ -n "$TILED_PID" ] && [ "$(readlink -f /proc/$TILED_PID/cwd)" = "$(pwd -P)" ]; then
-  echo "Gate 1 PASS — the server on $PORT (pid $TILED_PID) serves THIS root"
-elif [ -n "$TILED_PID" ]; then
-  echo "Gate 1 FAIL — IMPOSTOR on $PORT: it serves $(readlink -f /proc/$TILED_PID/cwd), not $(pwd -P)"
-elif ss -lntH "sport = :$PORT" | grep -q LISTEN; then
-  echo "Gate 1 FAIL — $PORT is held by ANOTHER USER's process (no pid visible); pick a free uvicorn.port"
+if ! command -v ss >/dev/null; then
+  echo "Gate 1 INCONCLUSIVE — ss (iproute2) is missing; do not proceed"
 else
-  echo "Gate 1 FAIL — nothing listening on $PORT; read .tilewright/server.log"
+  for i in $(seq 60); do
+    ss -lntH "sport = :$PORT" | grep -q LISTEN && break
+    sleep 1
+  done
+  TILED_PID=$(ss -lptnH "sport = :$PORT" | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2)
+
+  if [ -n "$TILED_PID" ] && [ "$(readlink -f /proc/$TILED_PID/cwd)" = "$(pwd -P)" ]; then
+    echo "Gate 1 PASS — the server on $PORT (pid $TILED_PID) serves THIS root"
+  elif [ -n "$TILED_PID" ]; then
+    echo "Gate 1 FAIL — IMPOSTOR on $PORT: it serves $(readlink -f /proc/$TILED_PID/cwd), not $(pwd -P)"
+  elif ss -lntH "sport = :$PORT" | grep -q LISTEN; then
+    echo "Gate 1 FAIL — $PORT is held by ANOTHER USER's process (no pid visible); pick a free uvicorn.port"
+  else
+    echo "Gate 1 FAIL — nothing listening on $PORT; read .tilewright/server.log"
+  fi
 fi
 ```
 
@@ -221,10 +233,10 @@ whose cwd is this root *is* this root's server; anything else on the port is
 somebody else's catalog, and registering into it writes your dataset somewhere
 you will not find it.
 
-If it reports `nothing listening`, read `.tilewright/server.log`: `address
-already in use` means another root holds the port — change `uvicorn.port`. That
-`$TILED_PID` is also the real process; use it (not `$!`) to stop the server
-later. A restart is needed only if you edit `config.yml` — which, per the layout
+On PASS, `$TILED_PID` is the real uvicorn process — use it (not `$!`) to stop
+the server later. If it reports `nothing listening`, read
+`.tilewright/server.log`: `address already in use` means another root holds the
+port — change `uvicorn.port`. A restart is needed only if you edit `config.yml` — which, per the layout
 above, adding a dataset never requires.
 
 **Register against the same `<PORT>` this gate just checked.** Gate 1 vouches
@@ -311,8 +323,9 @@ print(art, arr.shape, arr.dtype)
 **Gate 3 passes only when a real array comes back with the shape the manifest
 predicted.** For a `table` (pointer-only, 0 artifacts) dataset there is nothing
 to read back — it registers no assets at all, so no read can ever fail. Gate 3
-is instead: the entity metadata round-trips (`c["<KEY>"][ent].metadata`) and
-its locator columns are present. Say so in your report rather than skipping the
+is instead: the entity metadata round-trips (`c["<KEY>"][ent].metadata`) with
+its sidecar columns — plus rendered locator columns if, and only if, the YAML
+declares a `locator:` block (it is optional). Say so in your report rather than skipping the
 gate silently.
 
 This gate reads **one** artifact of one entity. That is enough to prove the
@@ -330,7 +343,7 @@ in the **server's** terminal/log, not in your client output. Read
 |---|---|---|
 | Gate 2 prints `FAILED artifact ...: 415: The given data source mimetype, application/x-hdf5-broker, is not one that the Tiled server knows how to read` | `adapters_by_mimetype` missing from `.tilewright/config.yml` — this fails at **registration**, not at read | Restore that block, restart the server, then **delete the dataset container (`c['<KEY>'].delete(recursive=True)`) and re-register** — the failed run left empty children that a plain re-run would count as `skipped`, hiding the breakage behind a green Gate 2 |
 | Gate 3 returns 500, and the server log says `Refusing to serve file://localhost/<path> because it is outside the readable storage area for this server` | The data is not under `readable_storage` — `.tilewright/` is not in the data root, or the server was started from another directory | Do not widen the allowlist to paper over it: move `.tilewright/` beside the data, or re-run the serve command from the data root so the allowlist means what it says. This error is the layout telling you it was bypassed |
-| Same `Refusing to serve` for data that IS under the root | Symlinked root: `readable_storage: ["."]` becomes the **physical** cwd, `directory:` is a **logical** path, and the containment test never resolves either | **Preferred:** rewrite `directory:` physically (`readlink -f`), regenerate the manifest, **delete the container and re-register** — a plain re-run keeps the old URI and reports `skipped failed=0` while Gate 3 still 500s. **Only if you cannot regenerate:** *add* the logical path alongside `"."` (`- "."` then `- "<logical path>"`) and restart. Never **replace** `"."` with the logical path: this config is the whole root's, and a lone logical allowlist refuses every dataset here whose `directory:` is physical — which onboard's `pwd -P` rule makes the norm. Measured: replacing → the sibling dataset 500s; adding → both serve. Setting `readable_storage` to the *physical* path is a no-op — that is what `"."` already gives you. Diagnose by comparing the **raw** `directory:` against `pwd -P`; do **not** `readlink -f` it first, or you get OK exactly when the dataset is broken |
+| Same `Refusing to serve` for data that IS under the root | Symlinked root: `readable_storage: ["."]` becomes the **physical** cwd, `directory:` is a **logical** path, and the containment test never resolves either | **Preferred:** rewrite `directory:` physically (`readlink -f`), regenerate the manifest, **delete the container and re-register** — a plain re-run keeps the old URI and reports `skipped failed=0` while Gate 3 still 500s. **Only if you cannot regenerate:** *add* the logical path alongside `"."` (`- "."` then `- "<logical path>"`) and restart. Never **replace** `"."` with the logical path: this config is the whole root's, and a lone logical allowlist refuses every dataset here whose `directory:` is physical — which onboard's `pwd -P` rule makes the norm. Measured: replacing → the sibling dataset 500s; adding → both serve. Setting `readable_storage` to the *physical* path is a no-op **when the server's cwd is the data root** — that is exactly what `"."` already gives you there. Diagnose by comparing the **raw** `directory:` against `pwd -P`; do **not** `readlink -f` it first, or you get OK exactly when the dataset is broken |
 | Serve exits: `[Errno 98] error while attempting to bind on address ('127.0.0.1', 8017): address already in use` | Another data root's server already holds the port — this layout is one catalog per data root | Pick a free `uvicorn.port` in `.tilewright/config.yml` and pass the matching `--url http://localhost:<PORT>` to register. Do **not** merge two data roots into one catalog to dodge it |
 | `httpx.ConnectError` / connection refused during register | Server not running, or a different port | Step 2 first; confirm Gate 1 passes |
 | Register prints `failed=<N>` with a loud WARNING about child count | A crashed earlier run left a half-registered entity | Delete the dataset container (see Gate 2) and re-register; `skipped` is fine only after a clean run, `failed` never is |
@@ -356,5 +369,5 @@ read. Fix it like this, and do not omit the delete:
    URI, and re-registering will not replace it;
 4. re-register and re-run Gate 3.
 
-Skip step 3 and you get `skipped=N failed=0` with Gate 3 still returning 500 —
-the same triage row you just came from.
+Skip the delete (item 3 above) and you get `skipped=N failed=0` with Gate 3
+still returning 500 — the same triage row you just came from.
