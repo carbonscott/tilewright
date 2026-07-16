@@ -63,7 +63,8 @@ The result is a validated `.tilewright/datasets/<KEY>.yml` and
 The YAML contract is a tagged union — `source: files | batch | table` — plus a
 `key`, provenance `metadata`, and an `artifacts` list. See `examples/datasets/` for
 worked examples and `skills/tilewright-onboard/reference/onboarding.md` for the full
-field reference.
+field reference. Copy their *structure*, not their filenames: those predate the
+`<KEY>` convention above (`broad_sigma.yml` holds `key: BROAD_SIGMA`).
 
 ### 2. Serve and register — the `tilewright-register` skill
 

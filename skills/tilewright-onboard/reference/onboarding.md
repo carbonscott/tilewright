@@ -92,14 +92,17 @@ source:
     params: {group: "/", from: attrs}
 ```
 
-- `directory` (string, required) — absolute path. Registration builds asset
-  URIs as `file://localhost{directory}/{file}`, and the server only serves
-  assets under an allowlisted root. Put `.tilewright/` in the data root and
-  this holds by construction: `directory` is that root or sits beneath it, so
-  the **tilewright-register** skill's config allowlists it without ever naming
-  this dataset. If `directory` points outside the root holding `.tilewright/`,
-  reads will be refused — that is a misplaced `.tilewright/`, not a config to
-  widen.
+- `directory` (string, required) — absolute path, and write it **physical**
+  (`readlink -f`), not through a symlink. Registration builds asset URIs from
+  this string verbatim (`file://localhost{directory}/{file}`), and the server
+  serves an asset only if that path is contained in an allowlisted root — a
+  comparison that never resolves symlinks. Put `.tilewright/` in the data root
+  and write `directory` physically, and the allowlist holds without ever naming
+  this dataset: `directory` is that root or sits beneath it, so the
+  **tilewright-register** skill's config covers it. A logical path that
+  symlinks into the root is still refused, and `directory` pointing outside the
+  root holding `.tilewright/` means a misplaced `.tilewright/` — neither is a
+  config to widen. Both fail only at first read, never at registration.
 - `pattern` (string, required) — glob relative to `directory`. Make it
   exclude non-HDF5 siblings (e.g. `*.h5` when the dir also holds `.nc`
   twins; `*/simulations.h5` to match one file per subdirectory).
