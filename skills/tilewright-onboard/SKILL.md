@@ -32,6 +32,13 @@ code tree:
 └── <the actual data files>
 ```
 
+`<KEY>` is the `key:` value you set inside the dataset YAML (e.g.
+`BROAD_SIGMA`). **Name the YAML file and the manifest directory after it,
+exactly** — `tilewright-register` locates both by `<KEY>` and nothing else, so
+a `broad_sigma.yml` holding `key: BROAD_SIGMA` breaks the handoff even though
+both gates pass. The worked examples you copy in step 3 predate this rule; take
+their *structure*, not their filenames.
+
 Keeping the manifest beside the data is what lets the **tilewright-register**
 skill allowlist the data root once and never edit a config again.
 
@@ -55,7 +62,11 @@ are relative to the data root.
 2. Dump ONE candidate file completely — every dataset's shape/dtype and every
    attribute at every level, groups included:
 
-```python
+`h5py` lives in the repo's venv, not in the data root — run the dump through
+`--project` or it dies on `ModuleNotFoundError`:
+
+```bash
+uv run --project <tilewright repo root> python - <<'EOF'
 import h5py
 fp = "<one_matched_file>"
 with h5py.File(fp, "r") as f:
@@ -69,6 +80,7 @@ with h5py.File(fp, "r") as f:
         for k, v in obj.attrs.items():
             print(f"attr /{name}@{k} = {v!r}")
     f.visititems(dump)
+EOF
 ```
 
 ## Step 2 — decide source tag, params, and artifact membership

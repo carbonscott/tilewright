@@ -25,8 +25,10 @@ re-downloads:
 export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE
 ```
 
-Run the CLI with `uv run tilewright <command>` (or `uv tool install .` for a bare
-`tilewright`). There are two commands, each self-documenting via `--help`:
+Run the CLI from your data root with `uv run --project <tilewright repo root>
+tilewright <command>` (or `uv tool install .` for a bare `tilewright`).
+`--project` selects the environment without changing the working directory.
+There are two commands, each self-documenting via `--help`:
 
 | command | does |
 |---|---|
@@ -42,19 +44,21 @@ skill (`skills/tilewright-onboard/` — a Claude Code skill; point Claude at it,
 symlink into `~/.claude/skills/`) on the dataset directory. The agent inspects the
 data, chooses one source archetype, authors the dataset YAML, and generates the
 Parquet manifest with the entity/artifact counts it predicted first — then **stops
-before registration**. Its work passes two machine-checkable gates:
+before registration**.
 
 Its outputs land in a `.tilewright/` directory **inside the data root**, so the
-manifest travels with the data it describes:
+manifest travels with the data it describes. `<KEY>` is the YAML's own `key:`
+value; the file and the manifest directory are both named after it. Its work
+passes two machine-checkable gates:
 
 ```bash
 cd <data root>            # the directory holding your data, not the code tree
-uv run --project <tilewright repo> tilewright manifest .tilewright/datasets/<name>.yml --check                     # Gate A: contract OK
-uv run --project <tilewright repo> tilewright manifest .tilewright/datasets/<name>.yml -o .tilewright/manifests/<NAME>  # Gate B: counts
+uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/<KEY>.yml --check                     # Gate A: contract OK
+uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/<KEY>.yml -o .tilewright/manifests/<KEY>  # Gate B: counts
 ```
 
-The result is a validated `.tilewright/datasets/<name>.yml` and
-`.tilewright/manifests/<NAME>/{entities,artifacts}.parquet`.
+The result is a validated `.tilewright/datasets/<KEY>.yml` and
+`.tilewright/manifests/<KEY>/{entities,artifacts}.parquet`.
 
 The YAML contract is a tagged union — `source: files | batch | table` — plus a
 `key`, provenance `metadata`, and an `artifacts` list. See `examples/datasets/` for
@@ -69,17 +73,22 @@ array back through HTTP to prove the bytes actually flow:
 
 ```bash
 cd <data root>
-uv run --project <tilewright repo> tiled serve config .tilewright/config.yml --api-key tcbmin   # own terminal
-uv run --project <tilewright repo> tilewright register .tilewright/datasets/<name>.yml \
-  --manifests .tilewright/manifests/<NAME> \
+uv run --project <tilewright repo root> tiled serve config .tilewright/config.yml --api-key tcbmin   # own terminal
+uv run --project <tilewright repo root> tilewright register .tilewright/datasets/<KEY>.yml \
+  --manifests .tilewright/manifests/<KEY> \
   --url http://localhost:8017 --api-key tcbmin
 ```
 
 Because that config allowlists the data root — `.tilewright/`'s own parent — every
 dataset onboarded under it is servable with **no config edit and no restart**. The
-repo-root `config.yml` is the legacy single-catalog setup for the shipped
+layout is one catalog per data root, so give each root its own `uvicorn.port`.
+The repo-root `config.yml` is the legacy single-catalog setup for the shipped
 `examples/` corpus, which names each data directory explicitly; new datasets should
 use the `.tilewright/` layout instead.
+
+Registration alone does not prove much: it never opens the data, and the
+allowlist is only checked on read — so a dataset can register with `failed=0`
+and serve nothing. That is why the skill's last gate reads an array back.
 
 The dataset is now in the catalog:
 

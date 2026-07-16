@@ -9,9 +9,11 @@ Three budgets are enforced here:
   2. total source LOC in tilewright/ stays <= 750;
   3. the contract's top-level concept set never grows past 4 keys.
 
-Budget 1 reads the real corpus under /sdf, so it runs only on a host that can
-see that data (e.g. sdfiana025); elsewhere those cases skip rather than fail —
-a missing filesystem is not a broken contract. Budgets 2 and 3 always run.
+Budget 1 reads the real corpus under /sdf, so it runs only where that data is
+mounted (e.g. sdfiana025); elsewhere those cases skip — an unmounted
+filesystem is not a broken contract. The skip is keyed to the mount, not to
+the dataset: where /sdf IS mounted, a missing dataset fails loudly rather than
+skipping. Budgets 2 and 3 always run.
 """
 
 from pathlib import Path
@@ -41,8 +43,13 @@ CORPUS = [
 def test_corpus_counts(tmp_path, yaml_rel, n_entities, n_artifacts):
     cfg = load_config(REPO / yaml_rel)
     directory = Path(cfg["source"][source_tag(cfg)]["directory"])
-    if not directory.is_dir():
-        pytest.skip(f"proof corpus absent: {directory} (needs a host that sees /sdf)")
+    # Skip only where the corpus filesystem itself is absent (a laptop, CI). If
+    # the mount IS here, the dataset must be too: a missing directory is then a
+    # real regression, so fall through and let generation fail loudly rather
+    # than skipping the budget that this suite exists to enforce.
+    mount = Path(*directory.parts[:2])  # e.g. /sdf
+    if not mount.exists():
+        pytest.skip(f"proof-corpus filesystem {mount} not mounted on this host")
     ent_df, art_df = generate_manifests(cfg, tmp_path / cfg["key"])
     assert len(ent_df) == n_entities
     assert len(art_df) == n_artifacts

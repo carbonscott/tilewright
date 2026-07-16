@@ -213,7 +213,8 @@ ls -la /abs/path/to/dataset_dir      # .nc twins? .parquet sidecars? .gz? subdir
 **Step 2 — dump one candidate file completely** (every dataset's shape/dtype
 and every attribute at every level, groups included):
 
-```python
+```bash
+uv run --project <tilewright repo root> python - <<'EOF'
 import h5py
 fp = "/abs/path/to/one_matched_file.h5"
 with h5py.File(fp, "r") as f:
@@ -227,6 +228,7 @@ with h5py.File(fp, "r") as f:
         for k, v in obj.attrs.items():
             print(f"attr /{name}@{k} = {v!r}")
     f.visititems(dump)
+EOF
 ```
 
 **Step 3 — read your observations off this table:**
@@ -378,21 +380,25 @@ physics params plus `globus_url` etc.; there are no array children.
 
 ## Commands
 
-All from the **data root** (the directory holding `.tilewright/`), with
-`UV_CACHE_DIR` exported (see Prerequisites). `--project` points uv at the
-tilewright checkout for the environment; it does not change the working
-directory, so the relative paths below stay anchored to the data root.
+All from the **data root** (the directory holding `.tilewright/`) unless a step
+says otherwise, with `UV_CACHE_DIR` exported (see Prerequisites). `--project`
+points uv at the tilewright checkout for the environment; it does not change
+the working directory, so the relative paths below stay anchored to the data
+root.
+
+`MY_DATASET` below stands for `<KEY>` — the `key:` value in the YAML. The file
+and the manifest directory are both named after it, exactly.
 
 **1. Validate the contract only (touches no data):**
 ```bash
-uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/my_dataset.yml --check
+uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/MY_DATASET.yml --check
 # -> contract OK: key=... source=files|batch|table artifacts=N
 # invalid -> every error printed ("source.table requires 'id' ..."), exit 1
 ```
 
 **2. Generate manifests:**
 ```bash
-uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/my_dataset.yml -o .tilewright/manifests/MY_DATASET
+uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/MY_DATASET.yml -o .tilewright/manifests/MY_DATASET
 # -> dataset=MY_DATASET entities=N artifacts=M -> .tilewright/manifests/MY_DATASET/...
 ```
 This writes `entities.parquet` (uid + one column per parameter [+ extra,
