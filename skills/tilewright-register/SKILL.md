@@ -209,12 +209,14 @@ else
 
   if [ -n "$TILED_PID" ] && [ "$(readlink -f /proc/$TILED_PID/cwd)" = "$(pwd -P)" ]; then
     echo "Gate 1 PASS — the server on $PORT (pid $TILED_PID) serves THIS root"
+  elif [ -n "$TILED_PID" ] && tr '\0' '\n' < /proc/$TILED_PID/cmdline | grep -q "^$(pwd -P)/.tilewright/"; then
+    echo "Gate 1 PASS — the server on $PORT (pid $TILED_PID) was started from THIS root's config"
   elif [ -n "$TILED_PID" ]; then
-    echo "Gate 1 FAIL — IMPOSTOR on $PORT: it serves $(readlink -f /proc/$TILED_PID/cwd), not $(pwd -P)"
+    echo "Gate 1 FAIL — IMPOSTOR on $PORT: it serves $(readlink -f /proc/$TILED_PID/cwd), not $(pwd -P). Change uvicorn.port and re-serve"
   elif ss -lntH "sport = :$PORT" | grep -q LISTEN; then
     echo "Gate 1 FAIL — $PORT is held by ANOTHER USER's process (no pid visible); pick a free uvicorn.port"
   else
-    echo "Gate 1 FAIL — nothing listening on $PORT; read .tilewright/server.log"
+    echo "Gate 1 FAIL — nothing listening on $PORT; your server never bound or already exited"
   fi
 fi
 ```
@@ -225,19 +227,29 @@ server on your port looks like an empty port unless you check `LISTEN`
 separately. Do not drop the `2>/dev/null`-free form either — a missing `ss`
 must be loud, not silently read as "nothing listening".
 
-**Gate 1 passes only on `Gate 1 PASS`.** This works identically whether you just
+**Gate 1 passes only on `Gate 1 PASS`.** It works identically whether you just
 started the server or are adding a second dataset to a root whose server has
-been up for days — it carries no state between commands and trusts no log. Since
-both `uri` and `readable_storage` resolve against the server's cwd, a server
-whose cwd is this root *is* this root's server; anything else on the port is
-somebody else's catalog, and registering into it writes your dataset somewhere
-you will not find it.
+been up for days — it carries no state between commands and trusts no log.
+
+Two ways to pass, because there are two configs this skill sanctions. With the
+relative config of step 1, `uri` and `readable_storage` both resolve against the
+server's cwd, so a cwd of this root means this root's catalog. With the
+absolutized config (the unknown-cwd hatch above), cwd is irrelevant and the
+second branch identifies the server by the config file it was launched with
+instead.
+
+Neither check is a proof of catalog identity — a server started in this root
+against some *other* root's config would pass and still write elsewhere. Gate 1
+buys you "this is my server, not a stranger's"; the layout's one-config-per-root
+rule is what makes that mean "my catalog". Do not keep a second config in a
+root.
 
 On PASS, `$TILED_PID` is the real uvicorn process — use it (not `$!`) to stop
-the server later. If it reports `nothing listening`, read
-`.tilewright/server.log`: `address already in use` means another root holds the
-port — change `uvicorn.port`. A restart is needed only if you edit `config.yml` — which, per the layout
-above, adding a dataset never requires.
+the server later. `nothing listening` means your server never bound or already
+exited: read `.tilewright/server.log` for the traceback, and remember a previous
+run's `Uvicorn running on` proves nothing about now. A restart is needed only if
+you edit `config.yml` — which, per the layout above, adding a dataset never
+requires.
 
 **Register against the same `<PORT>` this gate just checked.** Gate 1 vouches
 for a port, not for the `--url` you type next; point them at different servers
