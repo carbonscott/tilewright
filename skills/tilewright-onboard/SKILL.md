@@ -51,7 +51,7 @@ export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE
 uv sync                          # once — creates .venv
 
 cd <data root>                   # then work from here
-pwd -P                           # <- the PHYSICAL root; use this for directory:
+pwd -P                           # <- the PHYSICAL root; anchor directory: to this
 mkdir -p .tilewright/datasets .tilewright/manifests
 ```
 
@@ -59,12 +59,15 @@ Every command below runs **from the data root**, reaching the CLI in the repo
 with `uv run --project <tilewright repo root> ...`. Paths inside the commands
 are relative to the data root.
 
-Use that `pwd -P` value for `directory:` in step 3, not bare `pwd`. If you
-reached the data root through a symlink, `pwd` hands you a logical path that
-passes both gates here and then serves nothing: the server compares paths as
-written and never resolves them, so a logical path is refused even though the
-data genuinely lives under the root. Writing the physical path now means the
-problem never exists.
+In step 3, write `directory:` as that `pwd -P` value — or a subdirectory of it
+if the files live one level down — but never as bare `pwd`. If you reached the
+data root through a symlink, `pwd` hands you a logical path that passes both
+gates here and then serves nothing: the server compares paths as written and
+never resolves them, so a logical path is refused even though the data
+genuinely lives under the root. Writing the physical path now means the problem
+never exists. Getting it wrong is expensive later — fixing `directory:` after
+registration also requires deleting the registered dataset, because
+re-registering never rewrites an existing asset.
 
 ## Step 1 — inspect (observe; never guess)
 

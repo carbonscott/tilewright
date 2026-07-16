@@ -140,17 +140,19 @@ exists to delete.
 
 ## Step 2 — serve (background it; it must outlive this step)
 
-The server has to keep running while you register, so start it detached and
-keep its PID. A foreground `tiled serve` blocks until you kill it — there is no
-second terminal here.
+The server must outlive this command, so start it detached. A foreground
+`tiled serve` blocks until killed — there is no second terminal here.
 
 ```bash
 nohup uv run --project <tilewright repo root> tiled serve config .tilewright/config.yml \
     --api-key tcbmin > .tilewright/server.log 2>&1 &
-SERVER_PID=$!
 ```
 
 Creates `.tilewright/catalog.db` on first run.
+
+Do not bother saving `$!` — it is the `uv` wrapper, not uvicorn, so it proves
+nothing about the server and killing it orphans the real process. Gate 1 finds
+the true PID below; use that one to stop the server when you are done.
 
 ### Gate 1 — the server answering is *the one you started*
 
@@ -160,41 +162,53 @@ already in use`, the curl answers from the impostor, registration writes into
 **its** catalog, and Gate 3 reads back somebody else's array — all three gates
 green, nothing registered where you intended.
 
-Two signals lie here, and you must not build the gate on either:
+Three tempting signals all lie. Do not build the gate on any of them:
 
-- **`Application startup complete` is printed *before* the bind is attempted.**
-  It appears in a healthy log and in a collided one alike — measured 1 and 1.
-  It tells you nothing.
-- **A curl answering tells you nothing either** — an impostor on the port
-  answers exactly like your server.
+- **A curl answering** — an impostor on the port answers exactly like your
+  server.
+- **`Application startup complete`** — uvicorn prints it *before* attempting
+  the bind, so it appears in a healthy log and a collided one alike (measured:
+  1 and 1).
+- **`.tilewright/catalog.db` existing** — `init_if_not_exists` creates it
+  before the bind, so it appears even for a server that never started.
 
-The discriminator is **`Uvicorn running on`**, which is printed only after a
-successful bind (measured: 1 healthy, 0 collided). And you must **wait** for
-the outcome: grepping immediately races the bind and reports "clear" before
-uvicorn has even tried. Poll until the log is decisive:
+And the log itself is not enough: on the second dataset you did not start the
+server this session, so `server.log` is a *previous* run's file that keeps
+saying `Uvicorn running on` long after that server died.
+
+Ask the only question that matters — **is the process listening on this port
+serving *this* data root?** — by reading live state:
 
 ```bash
+PORT=<PORT>
 for i in $(seq 60); do
-  grep -qE "Uvicorn running on|address already in use" .tilewright/server.log && break
+  ss -lptnH "sport = :$PORT" 2>/dev/null | grep -q 'pid=' && break
   sleep 1
 done
+TILED_PID=$(ss -lptnH "sport = :$PORT" 2>/dev/null | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2)
 
-if grep -q "address already in use" .tilewright/server.log; then
-  echo "Gate 1 FAIL — port taken; your server is NOT running. Change uvicorn.port and re-serve"
-elif grep -q "Uvicorn running on" .tilewright/server.log && kill -0 $SERVER_PID 2>/dev/null; then
-  echo "Gate 1 PASS — your server owns <PORT>"
+if [ -z "$TILED_PID" ]; then
+  echo "Gate 1 FAIL — nothing listening on $PORT; read .tilewright/server.log"
+elif [ "$(readlink -f /proc/$TILED_PID/cwd)" = "$(pwd -P)" ]; then
+  echo "Gate 1 PASS — the server on $PORT (pid $TILED_PID) serves THIS root"
 else
-  echo "Gate 1 FAIL — server died; read .tilewright/server.log"
+  echo "Gate 1 FAIL — IMPOSTOR on $PORT: it serves $(readlink -f /proc/$TILED_PID/cwd), not $(pwd -P)"
 fi
 ```
 
-**Gate 1 passes only when your own log shows `Uvicorn running on`, shows no
-`address already in use`, and `$SERVER_PID` is alive.** If the port was taken,
-nothing you do afterwards touches your own catalog — and note
-`init_if_not_exists` creates `.tilewright/catalog.db` *before* the bind, so the
-DB existing is not evidence your server ever started. A restart is needed only
-if you edit `config.yml` — which, per the layout above, adding a dataset never
-requires.
+**Gate 1 passes only on `Gate 1 PASS`.** This works identically whether you just
+started the server or are adding a second dataset to a root whose server has
+been up for days — it carries no state between commands and trusts no log. Since
+both `uri` and `readable_storage` resolve against the server's cwd, a server
+whose cwd is this root *is* this root's server; anything else on the port is
+somebody else's catalog, and registering into it writes your dataset somewhere
+you will not find it.
+
+If it reports `nothing listening`, read `.tilewright/server.log`: `address
+already in use` means another root holds the port — change `uvicorn.port`. That
+`$TILED_PID` is also the real process; use it (not `$!`) to stop the server
+later. A restart is needed only if you edit `config.yml` — which, per the layout
+above, adding a dataset never requires.
 
 ## Step 3 — Gate 2: register
 
@@ -228,13 +242,22 @@ even when every row failed: errors are caught, printed to stderr as `FAILED
 ...`, tallied into `failed=`, and then the command returns 0 anyway. `$?`,
 `&&`, and `set -e` will all report success on a total failure.
 
-**`skipped` does not mean "complete".** Re-running is only safe after a *clean*
-run. An entity is counted `skipped` when its child *count* matches the
-manifest — the children are never inspected. A previous run that failed
-mid-artifact leaves committed-but-empty array children, so a re-run reports
-`entities_added=0 skipped=N failed=0` — Gate 2 green — on a catalog that 500s
-on every read. **After any run with `failed>0`, delete the dataset container
-before re-registering:**
+**`skipped` does not mean "complete", and re-registering never *updates*
+anything.** An entity is counted `skipped` when its child *count* matches the
+manifest — the children are never inspected, and nothing about them is
+rewritten. Two consequences, both of which show `failed=0`:
+
+- A previous run that failed mid-artifact leaves committed-but-empty children,
+  so a re-run reports `entities_added=0 skipped=N failed=0` — Gate 2 green — on
+  a catalog that 500s on every read.
+- **Changing a path in the YAML and regenerating the manifest does not change
+  the registered asset.** Fix a wrong `directory:`, regenerate, re-register:
+  the catalog still holds the *old* URI and Gate 3 still fails, while Gate 2
+  reports a clean `skipped=N failed=0`.
+
+**Delete the dataset container before re-registering whenever a previous run
+failed *or* you changed any path in the YAML.** Do not wait for `failed>0` — the
+path case never produces it:
 
 ```bash
 uv run --project <tilewright repo root> python -c "
@@ -286,7 +309,7 @@ in the **server's** terminal/log, not in your client output. Read
 |---|---|---|
 | Gate 2 prints `FAILED artifact ...: 415: The given data source mimetype, application/x-hdf5-broker, is not one that the Tiled server knows how to read` | `adapters_by_mimetype` missing from `.tilewright/config.yml` — this fails at **registration**, not at read | Restore that block, restart the server, then **delete the dataset container (`c['<KEY>'].delete(recursive=True)`) and re-register** — the failed run left empty children that a plain re-run would count as `skipped`, hiding the breakage behind a green Gate 2 |
 | Gate 3 returns 500, and the server log says `Refusing to serve file://localhost/<path> because it is outside the readable storage area for this server` | The data is not under `readable_storage` — `.tilewright/` is not in the data root, or the server was started from another directory | Do not widen the allowlist to paper over it: move `.tilewright/` beside the data, or re-run the serve command from the data root so the allowlist means what it says. This error is the layout telling you it was bypassed |
-| Same `Refusing to serve` for data that IS under the root | Symlinked root: `readable_storage: ["."]` becomes the **physical** cwd, `directory:` is a **logical** path, and the containment test never resolves either | Make the two agree *as written*. Either rewrite `directory:` physically (`readlink -f`) and regenerate the manifest — preferred — or set `readable_storage` to the **same logical path** `directory:` uses (an explicit path is stored unresolved). Setting `readable_storage` to the *physical* path is a no-op: that is exactly what `"."` already gives you. Diagnose by comparing the **raw** `directory:` against `pwd -P` — do **not** `readlink -f` it first: the URI keeps the unresolved path, so resolving before comparing reports OK exactly when the dataset is broken |
+| Same `Refusing to serve` for data that IS under the root | Symlinked root: `readable_storage: ["."]` becomes the **physical** cwd, `directory:` is a **logical** path, and the containment test never resolves either | Make the two agree *as written*. Either rewrite `directory:` physically (`readlink -f`), regenerate the manifest, **delete the container and re-register** (a plain re-run keeps the old URI and reports `skipped failed=0` while Gate 3 still 500s) — preferred; or set `readable_storage` to the **same logical path** `directory:` uses and restart, which needs no re-registration. Setting `readable_storage` to the *physical* path is a no-op: that is exactly what `"."` already gives you. Diagnose by comparing the **raw** `directory:` against `pwd -P` — do **not** `readlink -f` it first: the URI keeps the unresolved path, so resolving before comparing reports OK exactly when the dataset is broken |
 | Serve exits: `[Errno 98] error while attempting to bind on address ('127.0.0.1', 8017): address already in use` | Another data root's server already holds the port — this layout is one catalog per data root | Pick a free `uvicorn.port` in `.tilewright/config.yml` and pass the matching `--url http://localhost:<PORT>` to register. Do **not** merge two data roots into one catalog to dodge it |
 | `httpx.ConnectError` / connection refused during register | Server not running, or a different port | Step 2 first; confirm Gate 1 passes |
 | Register prints `failed=<N>` with a loud WARNING about child count | A crashed earlier run left a half-registered entity | Delete the dataset container (see Gate 2) and re-register; `skipped` is fine only after a clean run, `failed` never is |
@@ -302,7 +325,15 @@ server.
 Do not go hunting for *modelling* problems here — a contract or count problem
 belongs to **tilewright-onboard**; come back when Gate B is green again. The one
 edit that is yours to make is a `directory:` that is wrong *as a path* (a
-logical path through a symlink, per triage): fix it, regenerate the manifest,
-confirm Gate A and Gate B still pass, and continue. Onboard's gates cannot catch
-that one — they both pass on the logical path, because nothing opens the URI
-until a read.
+logical path through a symlink, per triage). Onboard's gates cannot catch that
+one — they both pass on the logical path, because nothing opens the URI until a
+read. Fix it like this, and do not omit the delete:
+
+1. rewrite `directory:` physically and regenerate the manifest;
+2. confirm Gate A and Gate B still pass;
+3. **delete the dataset container** — the registered asset still carries the old
+   URI, and re-registering will not replace it;
+4. re-register and re-run Gate 3.
+
+Skip step 3 and you get `skipped=N failed=0` with Gate 3 still returning 500 —
+the same triage row you just came from.
