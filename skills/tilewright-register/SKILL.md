@@ -188,20 +188,30 @@ serving *this* data root?** — by reading live state:
 
 ```bash
 PORT=<PORT>
+command -v ss >/dev/null || echo "Gate 1 INCONCLUSIVE — ss (iproute2) is missing; do not proceed"
+
 for i in $(seq 60); do
-  ss -lptnH "sport = :$PORT" 2>/dev/null | grep -q 'pid=' && break
+  ss -lntH "sport = :$PORT" | grep -q LISTEN && break
   sleep 1
 done
-TILED_PID=$(ss -lptnH "sport = :$PORT" 2>/dev/null | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2)
+TILED_PID=$(ss -lptnH "sport = :$PORT" | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2)
 
-if [ -z "$TILED_PID" ]; then
-  echo "Gate 1 FAIL — nothing listening on $PORT; read .tilewright/server.log"
-elif [ "$(readlink -f /proc/$TILED_PID/cwd)" = "$(pwd -P)" ]; then
+if [ -n "$TILED_PID" ] && [ "$(readlink -f /proc/$TILED_PID/cwd)" = "$(pwd -P)" ]; then
   echo "Gate 1 PASS — the server on $PORT (pid $TILED_PID) serves THIS root"
-else
+elif [ -n "$TILED_PID" ]; then
   echo "Gate 1 FAIL — IMPOSTOR on $PORT: it serves $(readlink -f /proc/$TILED_PID/cwd), not $(pwd -P)"
+elif ss -lntH "sport = :$PORT" | grep -q LISTEN; then
+  echo "Gate 1 FAIL — $PORT is held by ANOTHER USER's process (no pid visible); pick a free uvicorn.port"
+else
+  echo "Gate 1 FAIL — nothing listening on $PORT; read .tilewright/server.log"
 fi
 ```
+
+The `pid=`-less case is not hypothetical on a shared login node: `ss` shows you
+the *socket* of every user but the *pid* of only your own, so a colleague's
+server on your port looks like an empty port unless you check `LISTEN`
+separately. Do not drop the `2>/dev/null`-free form either — a missing `ss`
+must be loud, not silently read as "nothing listening".
 
 **Gate 1 passes only on `Gate 1 PASS`.** This works identically whether you just
 started the server or are adding a second dataset to a root whose server has
@@ -325,7 +335,7 @@ in the **server's** terminal/log, not in your client output. Read
 | `httpx.ConnectError` / connection refused during register | Server not running, or a different port | Step 2 first; confirm Gate 1 passes |
 | Register prints `failed=<N>` with a loud WARNING about child count | A crashed earlier run left a half-registered entity | Delete the dataset container (see Gate 2) and re-register; `skipped` is fine only after a clean run, `failed` never is |
 | `catalog.db` appears in the code repo, not beside the data | A command ran from the repo root instead of the data root | Delete the stray DB, `cd` to the data root, re-run. This is the binding rule biting |
-| Server starts but `c["<KEY>"]` is a `KeyError` | The server answering `--url` is not the one you started — a leftover on the same port, or a server launched from a different cwd (register reaches the catalog only over HTTP; its own cwd cannot pick a catalog) | Confirm via `.tilewright/server.log` that your server owns the port (Gate 1), then re-register |
+| Server starts but `c["<KEY>"]` is a `KeyError` | The server answering `--url` is not the one you started — a leftover on the same port, or a server launched from a different cwd (register reaches the catalog only over HTTP; its own cwd cannot pick a catalog) | Re-run **Gate 1** — the `/proc/<pid>/cwd` check, not the log. `server.log` is a dead run's file that still says `Uvicorn running on` long after that server exited, so it will "confirm" ownership of a port an impostor now holds. Re-register only once Gate 1 passes |
 
 ## STOP
 
