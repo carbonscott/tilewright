@@ -22,7 +22,7 @@ from tiled.structures.array import ArrayStructure, BuiltinDtype
 from tiled.structures.core import StructureFamily
 from tiled.structures.data_source import Asset, DataSource, Management
 
-from tilewright.manifest import load_config, source_tag
+from tilewright.manifest import load_config, server_dir
 
 BROKER_MIMETYPE = "application/x-hdf5-broker"
 
@@ -40,7 +40,7 @@ def to_json_safe(value):
     return value
 
 
-def _register_artifact(ent_container, directory, art_row):
+def _register_artifact(ent_container, server_base, art_row):
     shape = tuple(json.loads(art_row["shape"]))
     dtype = np.dtype(art_row["dtype"])
     structure = ArrayStructure(
@@ -52,7 +52,7 @@ def _register_artifact(ent_container, directory, art_row):
     index = art_row.get("index")
     if pd.notna(index):
         parameters["slice"] = str(int(index))
-    full_path = os.path.join(directory, art_row["file"])
+    full_path = os.path.join(server_base, art_row["file"])
     data_source = DataSource(
         structure_family=StructureFamily.array,
         structure=structure,
@@ -74,7 +74,7 @@ def _register_artifact(ent_container, directory, art_row):
     )
 
 
-def _register_one_entity(parent, dataset_key, directory, ent_row, art_group):
+def _register_one_entity(parent, dataset_key, server_base, ent_row, art_group):
     """Returns (entities_added, artifacts_added, skipped, failed)."""
     uid = str(ent_row["uid"])
     ent_key = f"{dataset_key}_{uid[:13]}"
@@ -96,7 +96,7 @@ def _register_one_entity(parent, dataset_key, directory, ent_row, art_group):
     art_added = art_failed = 0
     for _, art in art_group.iterrows():
         try:
-            _register_artifact(ent_container, directory, art)
+            _register_artifact(ent_container, server_base, art)
             art_added += 1
         except Exception as exc:
             print(f"FAILED artifact {ent_key}/{art['type']}: {exc}", file=sys.stderr)
@@ -106,7 +106,7 @@ def _register_one_entity(parent, dataset_key, directory, ent_row, art_group):
 
 def register_dataset(cfg, ent_df, art_df, url, api_key, max_workers=8):
     client = from_uri(url, api_key=api_key)
-    directory = cfg["source"][source_tag(cfg)]["directory"]
+    server_base = server_dir(cfg)
     if cfg["key"] in client:
         parent = client[cfg["key"]]
     else:
@@ -117,7 +117,7 @@ def register_dataset(cfg, ent_df, art_df, url, api_key, max_workers=8):
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = [
             pool.submit(_register_one_entity, parent, cfg["key"],
-                        directory, row, grouped.get(row["uid"], empty))
+                        server_base, row, grouped.get(row["uid"], empty))
             for _, row in ent_df.iterrows()
         ]
         for fut in as_completed(futures):

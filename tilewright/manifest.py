@@ -75,8 +75,11 @@ def validate(raw):
     _need_str(errors, body, "directory", f"source.{tag}")
     if isinstance(body.get("directory"), str) and body["directory"][:1] not in ("/", ""):
         errors.append(f"source.{tag}.directory must be an absolute path (Mode-B reads break later)")
+    sbd = body.get("server_base_dir")
+    if sbd is not None and not (isinstance(sbd, str) and sbd.startswith("/") and ".." not in sbd.split("/")):
+        errors.append(f"source.{tag}.server_base_dir must be an absolute path without '..' — the server's own view of 'directory'")
     if tag == "files":
-        _only_keys(errors, body, {"directory", "pattern", "params"}, "source.files")
+        _only_keys(errors, body, {"directory", "pattern", "params", "server_base_dir"}, "source.files")
         _need_str(errors, body, "pattern", "source.files")
         params = body.get("params", "absent")
         if isinstance(params, dict):
@@ -89,7 +92,7 @@ def validate(raw):
                           " or null: dataset declares no per-entity params)")
         _check_artifacts(errors, raw, tag)
     elif tag == "batch":
-        _only_keys(errors, body, {"directory", "pattern", "params", "extra"}, "source.batch")
+        _only_keys(errors, body, {"directory", "pattern", "params", "extra", "server_base_dir"}, "source.batch")
         _need_str(errors, body, "pattern", "source.batch")
         params = body.get("params")
         if not isinstance(params, dict):
@@ -129,6 +132,14 @@ def load_config(yaml_path):
 def source_tag(cfg):
     """The single source tag of a validated config: files | batch | table."""
     return next(t for t in SOURCE_TAGS if t in cfg["source"])
+
+
+def server_dir(cfg):
+    """Base joined with artifact 'file' for data_uri: the SERVER's view of the data root
+    (differs from 'directory' when the server mounts the same bytes elsewhere; local reads
+    keep using 'directory')."""
+    body = cfg["source"][source_tag(cfg)]
+    return body.get("server_base_dir") or body["directory"]
 
 
 # --- generation ---
