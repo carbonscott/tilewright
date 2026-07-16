@@ -95,8 +95,13 @@ uv run --project <tilewright repo root> tilewright ...
 
 **Skip this step if `.tilewright/config.yml` already exists** — a second
 dataset in the same data root reuses the root's config untouched. That is the
-whole promise of the layout: no config edit, no restart. If the server is
-already running, skip to step 3 as well.
+whole promise of the layout: no config edit, no restart.
+
+If a server is already running for this root, skip the serve *command* in step
+2 — but **still run Gate 1**. Do not skip to step 3. "The server is already
+running" is exactly the belief Gate 1 exists to test, and an impostor on the
+port is *most* likely here, on the second dataset, when you did not start the
+server in this session and never saw its log.
 
 Otherwise copy this and substitute `<PORT>` — one port per data root, since
 each root gets its own catalog and its own server. Everything else is verbatim:
@@ -266,6 +271,11 @@ is instead: the entity metadata round-trips (`c["<KEY>"][ent].metadata`) and
 its locator columns are present. Say so in your report rather than skipping the
 gate silently.
 
+This gate reads **one** artifact of one entity. That is enough to prove the
+config, the adapter, and the allowlist all work — the failures this skill is
+about are per-dataset, not per-file — but it is not a survey of every file. A
+single unreadable file among thousands will not surface here.
+
 ## Error triage — symptom, cause, fix
 
 Gate 3 failures surface client-side as a bare **500**; the explanatory line is
@@ -276,7 +286,7 @@ in the **server's** terminal/log, not in your client output. Read
 |---|---|---|
 | Gate 2 prints `FAILED artifact ...: 415: The given data source mimetype, application/x-hdf5-broker, is not one that the Tiled server knows how to read` | `adapters_by_mimetype` missing from `.tilewright/config.yml` — this fails at **registration**, not at read | Restore that block, restart the server, then **delete the dataset container (`c['<KEY>'].delete(recursive=True)`) and re-register** — the failed run left empty children that a plain re-run would count as `skipped`, hiding the breakage behind a green Gate 2 |
 | Gate 3 returns 500, and the server log says `Refusing to serve file://localhost/<path> because it is outside the readable storage area for this server` | The data is not under `readable_storage` — `.tilewright/` is not in the data root, or the server was started from another directory | Do not widen the allowlist to paper over it: move `.tilewright/` beside the data, or re-run the serve command from the data root so the allowlist means what it says. This error is the layout telling you it was bypassed |
-| Same `Refusing to serve` for data that IS under the root | Symlinked root: `readable_storage: ["."]` resolves to the **physical** cwd, `directory:` is a **logical** path, and the containment test never resolves symlinks | Rewrite `directory:` as the physical path in the dataset YAML and regenerate the manifest (or set `readable_storage` to the physical absolute path). Diagnose by comparing the **raw** `directory:` against `pwd -P` — do **not** `readlink -f` it first: the asset URI keeps the unresolved path, so resolving before comparing reports OK exactly when the dataset is broken |
+| Same `Refusing to serve` for data that IS under the root | Symlinked root: `readable_storage: ["."]` becomes the **physical** cwd, `directory:` is a **logical** path, and the containment test never resolves either | Make the two agree *as written*. Either rewrite `directory:` physically (`readlink -f`) and regenerate the manifest — preferred — or set `readable_storage` to the **same logical path** `directory:` uses (an explicit path is stored unresolved). Setting `readable_storage` to the *physical* path is a no-op: that is exactly what `"."` already gives you. Diagnose by comparing the **raw** `directory:` against `pwd -P` — do **not** `readlink -f` it first: the URI keeps the unresolved path, so resolving before comparing reports OK exactly when the dataset is broken |
 | Serve exits: `[Errno 98] error while attempting to bind on address ('127.0.0.1', 8017): address already in use` | Another data root's server already holds the port — this layout is one catalog per data root | Pick a free `uvicorn.port` in `.tilewright/config.yml` and pass the matching `--url http://localhost:<PORT>` to register. Do **not** merge two data roots into one catalog to dodge it |
 | `httpx.ConnectError` / connection refused during register | Server not running, or a different port | Step 2 first; confirm Gate 1 passes |
 | Register prints `failed=<N>` with a loud WARNING about child count | A crashed earlier run left a half-registered entity | Delete the dataset container (see Gate 2) and re-register; `skipped` is fine only after a clean run, `failed` never is |
@@ -287,6 +297,12 @@ in the **server's** terminal/log, not in your client output. Read
 
 Done = Gate 1 ✅ + Gate 2 ✅ + Gate 3 ✅. Report: the `entities_added/skipped/
 failed` summary line, and the shape+dtype of the array you read back through the
-server. Do not edit the dataset YAML or regenerate manifests here — a contract
-or count problem belongs to **tilewright-onboard**; come back when Gate B is
-green again.
+server.
+
+Do not go hunting for *modelling* problems here — a contract or count problem
+belongs to **tilewright-onboard**; come back when Gate B is green again. The one
+edit that is yours to make is a `directory:` that is wrong *as a path* (a
+logical path through a symlink, per triage): fix it, regenerate the manifest,
+confirm Gate A and Gate B still pass, and continue. Onboard's gates cannot catch
+that one — they both pass on the logical path, because nothing opens the URI
+until a read.

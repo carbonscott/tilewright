@@ -72,12 +72,16 @@ Run the **`tilewright-register`** skill (`skills/tilewright-register/`). It writ
 `.tilewright/config.yml`, starts the server, registers the manifests, and reads one
 array back through HTTP to prove the bytes actually flow:
 
+Roughly, once the skill has written `.tilewright/config.yml` (`<PORT>` is that
+root's own port):
+
 ```bash
 cd <data root>
-uv run --project <tilewright repo root> tiled serve config .tilewright/config.yml --api-key tcbmin   # own terminal
+nohup uv run --project <tilewright repo root> tiled serve config .tilewright/config.yml \
+  --api-key tcbmin > .tilewright/server.log 2>&1 &          # then check the log actually bound
 uv run --project <tilewright repo root> tilewright register .tilewright/datasets/<KEY>.yml \
   --manifests .tilewright/manifests/<KEY> \
-  --url http://localhost:8017 --api-key tcbmin
+  --url http://localhost:<PORT> --api-key tcbmin
 ```
 
 Because that config allowlists the data root — `.tilewright/`'s own parent — every

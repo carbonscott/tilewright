@@ -51,12 +51,20 @@ export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE
 uv sync                          # once — creates .venv
 
 cd <data root>                   # then work from here
+pwd -P                           # <- the PHYSICAL root; use this for directory:
 mkdir -p .tilewright/datasets .tilewright/manifests
 ```
 
 Every command below runs **from the data root**, reaching the CLI in the repo
 with `uv run --project <tilewright repo root> ...`. Paths inside the commands
 are relative to the data root.
+
+Use that `pwd -P` value for `directory:` in step 3, not bare `pwd`. If you
+reached the data root through a symlink, `pwd` hands you a logical path that
+passes both gates here and then serves nothing: the server compares paths as
+written and never resolves them, so a logical path is refused even though the
+data genuinely lives under the root. Writing the physical path now means the
+problem never exists.
 
 ## Step 1 — inspect (observe; never guess)
 
