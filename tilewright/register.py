@@ -137,7 +137,7 @@ def main(argv=None):
         prog="tilewright register",
         description="Register manifests into a running Tiled server over HTTP.",
     )
-    p.add_argument("yaml_path", help="dataset YAML (see the tcb-onboard skill)")
+    p.add_argument("yaml_path", help="dataset YAML (see the tilewright-onboard skill)")
     p.add_argument("--manifests", required=True,
                    help="dir containing entities.parquet + artifacts.parquet")
     p.add_argument("--url", default="http://localhost:8017")

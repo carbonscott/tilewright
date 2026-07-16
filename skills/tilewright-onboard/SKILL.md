@@ -1,10 +1,10 @@
 ---
-name: tcb-onboard
+name: tilewright-onboard
 description: Onboard a new, structure-unknown scientific dataset into a tilewright Tiled catalog — inspect the data, choose the source archetype (files | batch | table), author and validate the dataset YAML, then generate its Parquet manifest with entity/artifact counts you predicted, and STOP before registration. Use when a dataset directory needs a tilewright manifest and its layout is not yet described (per-file HDF5, batched HDF5, or pointer-only non-HDF5/remote data). Do NOT use for querying, reading, serving, or registering datasets already in the catalog, or for a dataset that already has a manifest.
 allowed-tools: Read, Write, Edit, Bash
 ---
 
-# tcb-onboard — author a tilewright dataset manifest
+# tilewright-onboard — author a tilewright dataset manifest
 
 Onboard a dataset whose structure is **not** described: inspect it, model it in
 one dataset YAML, and generate a Parquet manifest whose counts you predicted
@@ -21,7 +21,7 @@ procedure; that file is the reference.
 ## Setup — on a host that can see the data (e.g. sdfiana025)
 
 ```bash
-cd <tcb-min repo root>        # .../codes/tcb-min
+cd <tilewright repo root>        # .../codes/tilewright
 export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE
 uv sync                       # once — creates .venv
 ```
