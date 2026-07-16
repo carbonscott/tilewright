@@ -95,11 +95,16 @@ grep -m1 'directory:' .tilewright/datasets/<KEY>.yml
 same absolute path.** If they differ, stop here and read the next section — do
 not register.
 
-Two things this gate cannot tell you, so do not over-read it:
+Three things this gate cannot tell you, so do not over-read it:
 
-- **Printing nothing is not a pass.** An empty catalog, or one with no array
-  leaves, has no asset to compare against; so does a walk that runs out of
-  depth. Gate 1 is then *inconclusive*, and Gate 3 becomes your only probe.
+- **Printing nothing is not a pass.** An empty catalog, a catalog with no array
+  leaves, and a walk that ran out of depth all print nothing and all mean
+  *inconclusive* — never "no mismatch". If nothing prints, you have not run the
+  gate; Gate 3 becomes your only probe.
+- **One leaf is one dataset.** This prints the first asset it finds. A catalog
+  can hold datasets registered from different hosts under different prefixes,
+  so a prefix that matches yours proves that *dataset's* author agreed with the
+  server — not that you do.
 - `table` datasets register **no assets at all** — their `directory:` only
   locates a sidecar Parquet, which is read at registration and never served.
   Gate 1 does not apply to them, and a path mismatch cannot hurt them.
@@ -278,20 +283,19 @@ you *can* see.
 | Symptom | Cause | Fix |
 |---|---|---|
 | Gate 1 shows the endpoint's prefix differs from your `directory:` | Authoring host and serving host disagree about the absolute path | The blocker above. `server_base_dir` does not exist yet; report and stop. `table` datasets are unaffected |
-| Gate 2 prints `FAILED artifact ...: 415: The given data source mimetype, application/x-hdf5-broker, is not one that the Tiled server knows how to read` | The endpoint has no adapter bound for the broker mimetype — this fails at **registration**, not at read | Not fixable from your side on a foreign endpoint; ask the operator. Then **delete the dataset container and re-register** — the failed run left empty children that a plain re-run would count as `skipped`, hiding the breakage behind a green Gate 2 |
+| Gate 2 prints `FAILED artifact ...: 415: The given data source mimetype, application/x-hdf5-broker, is not one that the Tiled server knows how to read` | The endpoint has no adapter bound for the broker mimetype — this fails at **registration**, not at read | Not fixable from your side on a foreign endpoint; ask the operator, then delete the container and re-register (Gate 2) |
 | Gate 3 returns a bare **500**, `{"detail":"Internal server error"}` | Ambiguous by construction — path view, allowlist, adapter, or an unreadable file. The explanatory line is in the server's log, which you cannot read | Work the ordered list in the allowlist section above. Do not guess |
-| Gate 2 green, Gate 3 500, and you *did* fix a path since the last run | Re-registering never rewrites a registered URI; the catalog still holds the old one | Delete the container and re-register. `skipped=N failed=0` on a broken catalog is the expected symptom, not a contradiction |
 | `httpx.ConnectError` / connection refused | Wrong `<URL>`, or the endpoint is unreachable from this host | Some endpoints resolve only from inside the facility network. Check reachability before blaming the catalog |
-| `401` naming scopes it wanted | Your key lacks a scope — deletion needs `delete:node` **and** `delete:revision` | Read the message; it names the required and held scopes. Mint a key with the scopes you need |
+| `401` naming scopes it wanted | Your key lacks a scope | Read the message — it names the required and the held scopes (see Gate 2 for the deletion case) |
 | Register prints `failed=<N>` with a loud WARNING about child count | A crashed earlier run left a half-registered entity | Delete the dataset container (see Gate 2) and re-register; `skipped` is fine only after a clean run, `failed` never is |
 | `c["<KEY>"]` is a `KeyError` right after a green Gate 2 | You registered into a different catalog than you are reading — the `--url` and the read URL disagree | Use the same `<URL>` and `<API_KEY>` for Gate 2 and Gate 3. Nothing else links them; `tilewright register` reaches the catalog only over HTTP |
 
 ## STOP
 
-Done = Gate 1 ✅ + Gate 2 ✅ + Gate 3 ✅. Report: the `entities_added/skipped/
-failed` summary line, and the shape+dtype of the array you read back through the
-endpoint. If Gate 1 failed, report *that*, and do not report a green Gate 2 as
-though it meant anything.
+Done = Gate 1 ✅ (or *inconclusive* / not-applicable, said out loud) + Gate 2 ✅
++ Gate 3 ✅. Report: the `entities_added/skipped/failed` summary line, and the
+shape+dtype of the array you read back through the endpoint. If Gate 1 failed,
+report *that*, and do not report a green Gate 2 as though it meant anything.
 
 Do not go hunting for *modelling* problems here — a contract or count problem
 belongs to **tilewright-onboard**; come back when Gate B is green again. The one
