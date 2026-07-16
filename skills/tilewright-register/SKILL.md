@@ -53,15 +53,38 @@ path, or it can never open your data. The authoring host and the serving host
 are not the same machine, and they do not have to agree about what a file is
 called.
 
-Ask the endpoint what path prefix its existing assets carry:
+Ask the endpoint what path its existing assets carry. Only leaf array nodes hold
+assets, so this walks down to the first one it finds — a `data_uri` is not
+visible at the catalog root, and a query that stops there returns nothing and
+tells you nothing:
 
 ```bash
-curl -s -H "Authorization: Apikey <API_KEY>" \
-  "<URL>/api/v1/search/?include_data_sources=true" \
-  | grep -o '"data_uri":"[^"]*"' | head -5
+uv run --project <tilewright repo root> python -c "
+from tiled.client import from_uri
+c = from_uri('<URL>', api_key='<API_KEY>')
+node, path = c, []
+for _ in range(6):
+    try:
+        k = next(iter(node))
+    except (StopIteration, TypeError):
+        break
+    node, _ = node[k], path.append(k)
+    ds = getattr(node, 'data_sources', None)
+    ds = ds() if callable(ds) else ds
+    if ds:
+        print('/'.join(path))
+        for a in ds[0].assets:
+            print(a.data_uri)
+        break
+"
 ```
 
-Compare it against the raw string your manifests will use — **do not
+```
+BROAD_SIGMA/BROAD_SIGMA_6dc97c22e692e/rixs_spectrum
+file://localhost/prjmaiqmag01/data-source/RIXS_SIM_BROAD_SIGMA/batch_0/simulations.h5
+```
+
+Compare that prefix against the raw string your manifests will use — **do not
 `readlink -f` it first**, or you destroy the signal you are looking for:
 
 ```bash
@@ -74,8 +97,9 @@ not register.
 
 Two things this gate cannot tell you, so do not over-read it:
 
-- An **empty catalog** has no assets to compare against. Gate 1 is then
-  inconclusive, not passed. Gate 3 becomes your only probe.
+- **Printing nothing is not a pass.** An empty catalog, or one with no array
+  leaves, has no asset to compare against; so does a walk that runs out of
+  depth. Gate 1 is then *inconclusive*, and Gate 3 becomes your only probe.
 - `table` datasets register **no assets at all** — their `directory:` only
   locates a sidecar Parquet, which is read at registration and never served.
   Gate 1 does not apply to them, and a path mismatch cannot hurt them.
