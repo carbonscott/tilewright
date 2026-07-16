@@ -142,15 +142,11 @@ Both are cwd-relative; absolutizing only one silently creates a second, empty
 *narrower* path — that reintroduces the per-dataset allowlist edit this layout
 exists to delete.
 
-**If you take that route, Gate 1's cwd check no longer applies** — it identifies
-your server *by* the cwd both values resolve against, and you have just removed
-that coupling, so it will call your own correct server an impostor. Everything
-below assumes the relative config this step writes. With an absolutized config,
-verify ownership by config path instead:
-
-```bash
-tr '\0' ' ' < /proc/$TILED_PID/cmdline    # must name THIS root's .tilewright/config.yml
-```
+Gate 1 handles that config too — it has a second pass branch that identifies the
+server by the config file it was launched with, precisely because cwd stops
+meaning anything once both values are absolute. Start the server with the
+**absolute, physical** path to this root's `.tilewright/config.yml` and the gate
+works unchanged.
 
 ## Step 2 — serve (background it; it must outlive this step)
 
@@ -360,7 +356,7 @@ in the **server's** terminal/log, not in your client output. Read
 | `httpx.ConnectError` / connection refused during register | Server not running, or a different port | Step 2 first; confirm Gate 1 passes |
 | Register prints `failed=<N>` with a loud WARNING about child count | A crashed earlier run left a half-registered entity | Delete the dataset container (see Gate 2) and re-register; `skipped` is fine only after a clean run, `failed` never is |
 | `catalog.db` appears in the code repo, not beside the data | A command ran from the repo root instead of the data root | Delete the stray DB, `cd` to the data root, re-run. This is the binding rule biting |
-| Server starts but `c["<KEY>"]` is a `KeyError` | The server answering `--url` is not the one you started — a leftover on the same port, or a server launched from a different cwd (register reaches the catalog only over HTTP; its own cwd cannot pick a catalog) | Re-run **Gate 1** — the `/proc/<pid>/cwd` check, not the log. `server.log` is a dead run's file that still says `Uvicorn running on` long after that server exited, so it will "confirm" ownership of a port an impostor now holds. Re-register only once Gate 1 passes |
+| Server starts but `c["<KEY>"]` is a `KeyError` | The server answering `--url` is not the one you started — a leftover on the same port, or a server launched from a different cwd (register reaches the catalog only over HTTP; its own cwd cannot pick a catalog) | Re-run **Gate 1** — the `/proc/<pid>` check, not the log. `server.log` is a dead run's file that still says `Uvicorn running on` long after that server exited, so it will "confirm" ownership of a port an impostor now holds. Re-register only once Gate 1 passes |
 
 ## STOP
 
