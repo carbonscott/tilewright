@@ -20,13 +20,33 @@ procedure; that file is the reference.
 
 ## Setup — on a host that can see the data (e.g. sdfiana025)
 
-```bash
-cd <tilewright repo root>        # .../codes/tilewright
-export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE
-uv sync                       # once — creates .venv
+Your outputs live in a `.tilewright/` directory **inside the data root** — the
+directory that contains the dataset you are onboarding. They do not go in the
+code tree:
+
+```
+<data root>/                     <- stand here for every command below
+├── .tilewright/
+│   ├── datasets/<KEY>.yml       <- step 3 writes this
+│   └── manifests/<KEY>/         <- step 5 writes this
+└── <the actual data files>
 ```
 
-Every command below is `uv run ...` from the repo root.
+Keeping the manifest beside the data is what lets the **tilewright-register**
+skill allowlist the data root once and never edit a config again.
+
+```bash
+cd <tilewright repo root>        # .../codes/tilewright — once, to build the env
+export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE
+uv sync                          # once — creates .venv
+
+cd <data root>                   # then work from here
+mkdir -p .tilewright/datasets .tilewright/manifests
+```
+
+Every command below runs **from the data root**, reaching the CLI in the repo
+with `uv run --project <tilewright repo root> ...`. Paths inside the commands
+are relative to the data root.
 
 ## Step 1 — inspect (observe; never guess)
 
@@ -72,7 +92,7 @@ artifact. `batch` → only `(N, ...)` leading-axis datasets can be artifacts;
 everything else a client needs (e.g. a `(151,)` energy axis) becomes a metadata
 path entry you write yourself (`shared_eloss: /eloss`).
 
-## Step 3 — author `examples/datasets/<KEY>.yml`
+## Step 3 — author `.tilewright/datasets/<KEY>.yml`
 
 Exactly four top-level keys, no others: `key`, `metadata` (`data_type`
 required), `source` (exactly one of `files | batch | table`), `artifacts`
@@ -84,7 +104,7 @@ wrong types fail loudly at Gate A.
 ## Step 4 — Gate A: validate the contract (touches no data)
 
 ```bash
-uv run tilewright manifest examples/datasets/<KEY>.yml --check
+uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/<KEY>.yml --check
 ```
 
 **Gate A passes only when it prints `contract OK: ...` and exits 0.** On a
@@ -104,7 +124,7 @@ them all (decode with the reference's error-triage table) and re-run until clean
 Then generate:
 
 ```bash
-uv run tilewright manifest examples/datasets/<KEY>.yml -o examples/manifests/<KEY>
+uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/<KEY>.yml -o .tilewright/manifests/<KEY>
 ```
 
 **Gate B passes only when the summary line
@@ -133,6 +153,8 @@ trial passed both as pointer-only yet silently lost servable arrays.)
 
 Done = Gate A ✅ + Gate B ✅ + soft gate cleared. **Do not run
 `tilewright register`** — registration, serving, and querying are deterministic,
-environment-coupled mechanics outside this skill's scope. Report back: the
-source tag chosen, the dataset YAML, and the verified `entities=/artifacts=`
-counts.
+environment-coupled mechanics outside this skill's scope. They are the
+**tilewright-register** skill's job, and it starts where you stop: from
+`.tilewright/datasets/<KEY>.yml` and `.tilewright/manifests/<KEY>/`. Report
+back: the source tag chosen, the dataset YAML, and the verified
+`entities=/artifacts=` counts.

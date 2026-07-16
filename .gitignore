@@ -1,4 +1,5 @@
 .venv/
+.tilewright/
 catalog.db*
 server.log
 __pycache__/

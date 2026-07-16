@@ -19,14 +19,30 @@ exact types or fail loud.
 
 ## Prerequisites
 
-You are on a host that can see the data (e.g. sdfiana025). Always export
-the uv cache first, and run everything from the repo root:
+You are on a host that can see the data (e.g. sdfiana025). Build the
+environment once from the repo root:
 
 ```bash
 cd /sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/codes/tilewright
 export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE
 uv sync          # once, creates .venv with tiled 0.2.x + deps
 ```
+
+Then **work from the data root** — the directory holding the dataset you are
+onboarding — and reach the CLI there with `uv run --project <tilewright repo
+root> ...`, which selects the environment without changing the working
+directory. Your outputs go in a `.tilewright/` directory inside that data
+root:
+
+```bash
+cd <data root>
+mkdir -p .tilewright/datasets .tilewright/manifests
+```
+
+Keeping the manifest beside the data it describes is what lets the
+**tilewright-register** skill allowlist the data root once, so no dataset ever
+needs a config edit. Every relative path in this guide is anchored to the data
+root unless it says otherwise.
 
 ## The dataset YAML contract — field by field
 
@@ -77,9 +93,13 @@ source:
 ```
 
 - `directory` (string, required) — absolute path. Registration builds asset
-  URIs as `file://localhost{directory}/{file}`, and the **server's**
-  `config.yml` must list this directory (or a parent) under
-  `readable_storage` or reads will be refused.
+  URIs as `file://localhost{directory}/{file}`, and the server only serves
+  assets under an allowlisted root. Put `.tilewright/` in the data root and
+  this holds by construction: `directory` is that root or sits beneath it, so
+  the **tilewright-register** skill's config allowlists it without ever naming
+  this dataset. If `directory` points outside the root holding `.tilewright/`,
+  reads will be refused — that is a misplaced `.tilewright/`, not a config to
+  widen.
 - `pattern` (string, required) — glob relative to `directory`. Make it
   exclude non-HDF5 siblings (e.g. `*.h5` when the dir also holds `.nc`
   twins; `*/simulations.h5` to match one file per subdirectory).
@@ -358,49 +378,42 @@ physics params plus `globus_url` etc.; there are no array children.
 
 ## Commands
 
-All from the repo root, with `UV_CACHE_DIR` exported (see Prerequisites).
+All from the **data root** (the directory holding `.tilewright/`), with
+`UV_CACHE_DIR` exported (see Prerequisites). `--project` points uv at the
+tilewright checkout for the environment; it does not change the working
+directory, so the relative paths below stay anchored to the data root.
 
 **1. Validate the contract only (touches no data):**
 ```bash
-uv run tilewright manifest examples/datasets/my_dataset.yml --check
+uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/my_dataset.yml --check
 # -> contract OK: key=... source=files|batch|table artifacts=N
 # invalid -> every error printed ("source.table requires 'id' ..."), exit 1
 ```
 
 **2. Generate manifests:**
 ```bash
-uv run tilewright manifest examples/datasets/my_dataset.yml -o examples/manifests/MY_DATASET
-# -> dataset=MY_DATASET entities=N artifacts=M -> examples/manifests/MY_DATASET/...
+uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/my_dataset.yml -o .tilewright/manifests/MY_DATASET
+# -> dataset=MY_DATASET entities=N artifacts=M -> .tilewright/manifests/MY_DATASET/...
 ```
 This writes `entities.parquet` (uid + one column per parameter [+ extra,
 locator columns]) and `artifacts.parquet`
 (`uid,type,file,dataset,index,shape,dtype`; empty-but-typed for table
 sources). Shape and dtype are captured now; registration never opens HDF5.
 
-**3. Start the server** (its own terminal; leave it running):
-```bash
-uv run tiled serve config config.yml --api-key tcbmin
-# serves http://127.0.0.1:8017; creates ./catalog.db on first run
-```
-Read-only pre-check (no config edit needed): `grep -A8 readable_storage
-config.yml` and confirm your dataset directory or a parent is listed. If it
-is not, add it — and note config edits take effect only after a server
-restart.
+**3. Serving and registering — not this skill.**
 
-**4. Register:**
-```bash
-uv run tilewright register examples/datasets/my_dataset.yml \
-    --manifests examples/manifests/MY_DATASET --url http://localhost:8017 --api-key tcbmin
-# -> dataset=MY_DATASET entities_added=N artifacts_added=M skipped=0 failed=0
-```
-A bare `Retrying...` on stderr from the tiled client is a harmless
-transient — ignore it as long as the summary line shows `failed=0`.
-Re-running is safe: an already-complete entity counts as `skipped`. An
-entity whose array-children count disagrees with the manifest (a crashed
-earlier run) prints a loud WARNING and counts as `failed` — delete it and
-re-register.
+Onboarding stops at Gate B. Configuring the catalog, starting the server,
+registering the manifests, and proving an array reads back through HTTP belong
+to the **tilewright-register** skill, which begins exactly where you stop:
+`.tilewright/datasets/my_dataset.yml` + `.tilewright/manifests/MY_DATASET/`.
 
-**5. Tests:**
+Because `.tilewright/` sits inside the data root and that skill's config
+allowlists the data root itself, a newly onboarded dataset needs **no config
+edit and no server restart** to become servable. Nothing you do here has to
+anticipate the server.
+
+**4. Tests** (from the tilewright repo root — these check the shipped corpus and
+the source budgets, not your dataset):
 ```bash
 uv run --with pytest pytest tests/ -v     # offline: corpus counts + budgets
 uv run python tests/verify_live.py        # manual: needs the server running
@@ -479,8 +492,12 @@ tw.locate(cn)["globus_url"]
 
 ## Verify
 
+Needs a registered dataset on a running server — i.e. after the
+**tilewright-register** skill has done its job, not at the end of onboarding.
+`--project` keeps this runnable from the data root:
+
 ```bash
-uv run python - <<'EOF'
+uv run --project <tilewright repo root> python - <<'EOF'
 from tiled.client import from_uri
 c = from_uri("http://localhost:8017", api_key="tcbmin")
 print(list(c))                          # dataset keys

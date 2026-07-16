@@ -1,6 +1,6 @@
 """Offline smoke tests — no server required.
 
-Run from the repo root (a host that can see the /sdf proof-corpus data):
+Run from the repo root:
 
     uv run --with pytest pytest tests/ -v
 
@@ -8,13 +8,23 @@ Three budgets are enforced here:
   1. the proof corpus generates exactly the expected entity/artifact counts;
   2. total source LOC in tilewright/ stays <= 750;
   3. the contract's top-level concept set never grows past 4 keys.
+
+Budget 1 reads the real corpus under /sdf, so it runs only on a host that can
+see that data (e.g. sdfiana025); elsewhere those cases skip rather than fail —
+a missing filesystem is not a broken contract. Budgets 2 and 3 always run.
 """
 
 from pathlib import Path
 
 import pytest
 
-from tilewright.manifest import ARTIFACT_COLUMNS, TOP_LEVEL_KEYS, generate_manifests, load_config
+from tilewright.manifest import (
+    ARTIFACT_COLUMNS,
+    TOP_LEVEL_KEYS,
+    generate_manifests,
+    load_config,
+    source_tag,
+)
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -30,6 +40,9 @@ CORPUS = [
 @pytest.mark.parametrize("yaml_rel,n_entities,n_artifacts", CORPUS)
 def test_corpus_counts(tmp_path, yaml_rel, n_entities, n_artifacts):
     cfg = load_config(REPO / yaml_rel)
+    directory = Path(cfg["source"][source_tag(cfg)]["directory"])
+    if not directory.is_dir():
+        pytest.skip(f"proof corpus absent: {directory} (needs a host that sees /sdf)")
     ent_df, art_df = generate_manifests(cfg, tmp_path / cfg["key"])
     assert len(ent_df) == n_entities
     assert len(art_df) == n_artifacts

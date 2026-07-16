@@ -44,34 +44,42 @@ data, chooses one source archetype, authors the dataset YAML, and generates the
 Parquet manifest with the entity/artifact counts it predicted first — then **stops
 before registration**. Its work passes two machine-checkable gates:
 
+Its outputs land in a `.tilewright/` directory **inside the data root**, so the
+manifest travels with the data it describes:
+
 ```bash
-uv run tilewright manifest examples/datasets/<name>.yml --check                        # Gate A: contract OK
-uv run tilewright manifest examples/datasets/<name>.yml -o examples/manifests/<NAME>    # Gate B: counts
+cd <data root>            # the directory holding your data, not the code tree
+uv run --project <tilewright repo> tilewright manifest .tilewright/datasets/<name>.yml --check                     # Gate A: contract OK
+uv run --project <tilewright repo> tilewright manifest .tilewright/datasets/<name>.yml -o .tilewright/manifests/<NAME>  # Gate B: counts
 ```
 
-The result is a validated `examples/datasets/<name>.yml` and
-`examples/manifests/<NAME>/{entities,artifacts}.parquet`.
+The result is a validated `.tilewright/datasets/<name>.yml` and
+`.tilewright/manifests/<NAME>/{entities,artifacts}.parquet`.
 
 The YAML contract is a tagged union — `source: files | batch | table` — plus a
 `key`, provenance `metadata`, and an `artifacts` list. See `examples/datasets/` for
 worked examples and `skills/tilewright-onboard/reference/onboarding.md` for the full
 field reference.
 
-### 2. Serve
+### 2. Serve and register — the `tilewright-register` skill
 
-Start the Tiled server once. It reads `config.yml` and serves on `127.0.0.1:8017`:
-
-```bash
-uv run tiled serve config config.yml --api-key tcbmin
-```
-
-### 3. Register
+Run the **`tilewright-register`** skill (`skills/tilewright-register/`). It writes
+`.tilewright/config.yml`, starts the server, registers the manifests, and reads one
+array back through HTTP to prove the bytes actually flow:
 
 ```bash
-uv run tilewright register examples/datasets/<name>.yml \
-  --manifests examples/manifests/<NAME> \
+cd <data root>
+uv run --project <tilewright repo> tiled serve config .tilewright/config.yml --api-key tcbmin   # own terminal
+uv run --project <tilewright repo> tilewright register .tilewright/datasets/<name>.yml \
+  --manifests .tilewright/manifests/<NAME> \
   --url http://localhost:8017 --api-key tcbmin
 ```
+
+Because that config allowlists the data root — `.tilewright/`'s own parent — every
+dataset onboarded under it is servable with **no config edit and no restart**. The
+repo-root `config.yml` is the legacy single-catalog setup for the shipped
+`examples/` corpus, which names each data directory explicitly; new datasets should
+use the `.tilewright/` layout instead.
 
 The dataset is now in the catalog:
 
