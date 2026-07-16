@@ -26,8 +26,11 @@ from tilewright.manifest import (
     TOP_LEVEL_KEYS,
     generate_manifests,
     load_config,
+    server_dir,
     source_tag,
+    validate,
 )
+from tilewright.register import _register_artifact, register_dataset
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -61,6 +64,80 @@ def test_corpus_counts(tmp_path, yaml_rel, n_entities, n_artifacts):
     assert ent_df["uid"].is_unique
 
 
+# --- source.server_base_dir: the server's view of the data root -------------
+#
+# The deployed pod mounts the same bytes at a different absolute path than the
+# generating host does. 'directory' stays the LOCAL truth (manifest generation
+# and client.load Mode-A reads both join against it); server_base_dir overrides
+# ONLY the base that reaches data_uri. These run offline: no server, no /sdf.
+
+LOCAL = "/sdf/data/lcls/ds/prj/prjmaiqmag01/results"
+SERVER = "/prjmaiqmag01"
+
+
+def _cfg(**tag_extra):
+    return {"key": "ls_static", "metadata": {"data_type": "spectra"},
+            "source": {"files": {"directory": LOCAL, "pattern": "*.h5",
+                                 "params": {"group": "/p", "from": "attrs"},
+                                 **tag_extra}},
+            "artifacts": [{"type": "spectrum", "dataset": "/spectra"}]}
+
+
+class _FakeContainer:
+    """Captures the DataSource that _register_artifact would POST."""
+
+    def __init__(self):
+        self.data_sources = None
+
+    def new(self, structure_family, data_sources, key, metadata):
+        self.data_sources = data_sources
+
+
+def _emit_uri(directory, file="LS/static/S_52.h5"):
+    """The data_uri _register_artifact builds for one artifact row."""
+    box = _FakeContainer()
+    row = {"type": "spectrum", "dataset": "/spectra", "index": None,
+           "shape": "[9, 2048]", "dtype": "float32", "file": file}
+    _register_artifact(box, directory, row)
+    return box.data_sources[0].assets[0].data_uri
+
+
+def test_server_base_dir_absent_is_unchanged():
+    """THE REGRESSION GUARD: no key == byte-identical to the old behavior."""
+    cfg = _cfg()
+    assert validate(cfg) == []
+    assert server_dir(cfg) == LOCAL
+    # Identical to the pre-change expression it replaced.
+    assert server_dir(cfg) == cfg["source"][source_tag(cfg)]["directory"]
+    assert _emit_uri(server_dir(cfg)) == (
+        "file://localhost/sdf/data/lcls/ds/prj/prjmaiqmag01/results/LS/static/S_52.h5")
+
+
+def test_server_base_dir_set_rebases_uri():
+    """With the key set, data_uri carries the SERVER's prefix, same rel file."""
+    cfg = _cfg(server_base_dir=SERVER)
+    assert validate(cfg) == []
+    assert server_dir(cfg) == SERVER
+    assert _emit_uri(server_dir(cfg)) == "file://localhost/prjmaiqmag01/LS/static/S_52.h5"
+    # The override must not disturb the local truth Mode-A reads depend on.
+    assert cfg["source"][source_tag(cfg)]["directory"] == LOCAL
+
+
+def test_server_base_dir_is_optional_and_must_be_absolute():
+    assert validate(_cfg()) == []  # optional: absence is not an error
+    errs = validate(_cfg(server_base_dir="prjmaiqmag01"))  # relative -> rejected
+    assert any("server_base_dir" in e for e in errs), errs
+    assert any("server_base_dir" in e for e in validate(_cfg(server_base_dir=42)))
+
+
+def test_server_base_dir_does_not_disturb_the_tagged_union():
+    """It sits beside the tag; it must not read as a second source tag."""
+    assert "exactly one of" not in " ".join(validate(_cfg(server_base_dir=SERVER)))
+    assert source_tag(_cfg(server_base_dir=SERVER)) == "files"
+    # A genuinely unknown sibling is still rejected.
+    assert any("unknown key" in e for e in validate(_cfg(server_bass_dir=SERVER)))
+
+
 def test_loc_budget():
     total = sum(len(p.read_text().splitlines())
                 for p in (REPO / "tilewright").glob("*.py"))
@@ -92,3 +169,26 @@ def test_skill_frontmatter(skill_dir):
     assert meta["name"] == skill_dir, (
         f"{skill_dir}: frontmatter name is {meta['name']!r}; it must match the directory"
     )
+def test_register_dataset_wires_server_base_into_registration(monkeypatch):
+    """The seam no other test defends: server_dir(cfg) -> _register_artifact.
+
+    Reverting register_dataset's `server_base = server_dir(cfg)` to the old
+    `cfg["source"][tag]["directory"]` is the exact regression this feature
+    exists to prevent, and every other test passes under it — they compose the
+    two halves themselves instead of making register_dataset do it.
+    """
+    import pandas as pd
+
+    seen = []
+    monkeypatch.setattr("tilewright.register.from_uri", lambda *a, **k: {})
+    monkeypatch.setattr("tilewright.register._register_one_entity",
+                        lambda parent, key, server_base, row, arts: seen.append(server_base) or (0, 0, 1, 0))
+
+    class _Client(dict):
+        def create_container(self, key, metadata):
+            return object()
+
+    monkeypatch.setattr("tilewright.register.from_uri", lambda *a, **k: _Client())
+    ent_df = pd.DataFrame([{"uid": "u1"}])
+    register_dataset(_cfg(server_base_dir=SERVER), ent_df, ent_df.iloc[0:0], "http://x", "k", max_workers=1)
+    assert seen == [SERVER], f"register_dataset passed {seen}, not the server's view {SERVER!r}"
