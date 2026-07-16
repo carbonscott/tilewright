@@ -103,8 +103,9 @@ running" is exactly the belief Gate 1 exists to test, and an impostor on the
 port is *most* likely here, on the second dataset, when you did not start the
 server in this session and never saw its log.
 
-Otherwise copy this and substitute `<PORT>` — one port per data root, since
-each root gets its own catalog and its own server. Everything else is verbatim:
+If there is no config yet, copy this and substitute `<PORT>` — one port per
+data root, since each root gets its own catalog and its own server. Everything
+else is verbatim:
 
 ```yaml
 uvicorn:
@@ -158,9 +159,12 @@ the true PID below; use that one to stop the server when you are done.
 
 A curl that gets a reply proves *a* server is up, not *your* server. If a stale
 server from another data root already owns the port, yours dies on `address
-already in use`, the curl answers from the impostor, registration writes into
-**its** catalog, and Gate 3 reads back somebody else's array — all three gates
-green, nothing registered where you intended.
+already in use` while the curl answers from the impostor — and registration
+writes your dataset into **its** catalog. What happens next depends on the
+impostor's allowlist: usually Gate 3 then fails with a 500 you will misdiagnose
+(its root does not admit your data), but if its allowlist happens to cover your
+files, all three gates go green with your dataset sitting in a catalog you will
+never look in. Either way it landed somewhere you did not intend.
 
 Three tempting signals all lie. Do not build the gate on any of them:
 
@@ -210,6 +214,10 @@ already in use` means another root holds the port — change `uvicorn.port`. Tha
 later. A restart is needed only if you edit `config.yml` — which, per the layout
 above, adding a dataset never requires.
 
+**Register against the same `<PORT>` this gate just checked.** Gate 1 vouches
+for a port, not for the `--url` you type next; point them at different servers
+and the gate certifies one catalog while your dataset goes into another.
+
 ## Step 3 — Gate 2: register
 
 ```bash
@@ -228,9 +236,9 @@ container from — Gate 2 passes only when all three hold:**
 2. `entities_added` + `skipped` equals Gate B's `entities=` count, **and**
 3. `artifacts_added` equals Gate B's `artifacts=` count.
 
-Check 3 is not redundant. Entity and artifact failures land in the same
-`failed` tally, so the entity arithmetic can look perfect while every artifact
-broke.
+Check 3 is not redundant with checks 1 and 2: it is what catches entities that
+were *created* but whose artifacts never attached — the 415 case below, where
+the entity count is perfect and the arrays are missing.
 
 On a *deliberate re-run* of an already-complete dataset, expect
 `entities_added=0 artifacts_added=0 skipped=<N> failed=0` — check 3 does not
@@ -309,7 +317,7 @@ in the **server's** terminal/log, not in your client output. Read
 |---|---|---|
 | Gate 2 prints `FAILED artifact ...: 415: The given data source mimetype, application/x-hdf5-broker, is not one that the Tiled server knows how to read` | `adapters_by_mimetype` missing from `.tilewright/config.yml` — this fails at **registration**, not at read | Restore that block, restart the server, then **delete the dataset container (`c['<KEY>'].delete(recursive=True)`) and re-register** — the failed run left empty children that a plain re-run would count as `skipped`, hiding the breakage behind a green Gate 2 |
 | Gate 3 returns 500, and the server log says `Refusing to serve file://localhost/<path> because it is outside the readable storage area for this server` | The data is not under `readable_storage` — `.tilewright/` is not in the data root, or the server was started from another directory | Do not widen the allowlist to paper over it: move `.tilewright/` beside the data, or re-run the serve command from the data root so the allowlist means what it says. This error is the layout telling you it was bypassed |
-| Same `Refusing to serve` for data that IS under the root | Symlinked root: `readable_storage: ["."]` becomes the **physical** cwd, `directory:` is a **logical** path, and the containment test never resolves either | Make the two agree *as written*. Either rewrite `directory:` physically (`readlink -f`), regenerate the manifest, **delete the container and re-register** (a plain re-run keeps the old URI and reports `skipped failed=0` while Gate 3 still 500s) — preferred; or set `readable_storage` to the **same logical path** `directory:` uses and restart, which needs no re-registration. Setting `readable_storage` to the *physical* path is a no-op: that is exactly what `"."` already gives you. Diagnose by comparing the **raw** `directory:` against `pwd -P` — do **not** `readlink -f` it first: the URI keeps the unresolved path, so resolving before comparing reports OK exactly when the dataset is broken |
+| Same `Refusing to serve` for data that IS under the root | Symlinked root: `readable_storage: ["."]` becomes the **physical** cwd, `directory:` is a **logical** path, and the containment test never resolves either | **Preferred:** rewrite `directory:` physically (`readlink -f`), regenerate the manifest, **delete the container and re-register** — a plain re-run keeps the old URI and reports `skipped failed=0` while Gate 3 still 500s. **Only if you cannot regenerate:** *add* the logical path alongside `"."` (`- "."` then `- "<logical path>"`) and restart. Never **replace** `"."` with the logical path: this config is the whole root's, and a lone logical allowlist refuses every dataset here whose `directory:` is physical — which onboard's `pwd -P` rule makes the norm. Measured: replacing → the sibling dataset 500s; adding → both serve. Setting `readable_storage` to the *physical* path is a no-op — that is what `"."` already gives you. Diagnose by comparing the **raw** `directory:` against `pwd -P`; do **not** `readlink -f` it first, or you get OK exactly when the dataset is broken |
 | Serve exits: `[Errno 98] error while attempting to bind on address ('127.0.0.1', 8017): address already in use` | Another data root's server already holds the port — this layout is one catalog per data root | Pick a free `uvicorn.port` in `.tilewright/config.yml` and pass the matching `--url http://localhost:<PORT>` to register. Do **not** merge two data roots into one catalog to dodge it |
 | `httpx.ConnectError` / connection refused during register | Server not running, or a different port | Step 2 first; confirm Gate 1 passes |
 | Register prints `failed=<N>` with a loud WARNING about child count | A crashed earlier run left a half-registered entity | Delete the dataset container (see Gate 2) and re-register; `skipped` is fine only after a clean run, `failed` never is |
