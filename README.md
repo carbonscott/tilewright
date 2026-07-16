@@ -66,30 +66,28 @@ worked examples and `skills/tilewright-onboard/reference/onboarding.md` for the 
 field reference. Copy their *structure*, not their filenames: those predate the
 `<KEY>` convention above (`broad_sigma.yml` holds `key: BROAD_SIGMA`).
 
-### 2. Serve and register — the `tilewright-register` skill
+### 2. Register — the `tilewright-register` skill
 
-Run the **`tilewright-register`** skill (`skills/tilewright-register/`). It writes
-`.tilewright/config.yml`, starts the server, registers the manifests, and reads one
-array back through HTTP to prove the bytes actually flow:
-
-Roughly, once the skill has written `.tilewright/config.yml` (`<PORT>` is that
-root's own port):
+Run the **`tilewright-register`** skill (`skills/tilewright-register/`). You hand it
+a Tiled endpoint that is **already running** — its `<URL>` and an `<API_KEY>` carrying
+write scopes; the skill does not start a server. It first proves the endpoint resolves
+the same absolute paths your manifests carry, then registers, then reads one array
+back through HTTP to prove the bytes actually flow:
 
 ```bash
 cd <data root>
-nohup uv run --project <tilewright repo root> tiled serve config .tilewright/config.yml \
-  --api-key tcbmin > .tilewright/server.log 2>&1 &          # then run the skill's Gate 1 — a log line cannot prove your server owns the port
 uv run --project <tilewright repo root> tilewright register .tilewright/datasets/<KEY>.yml \
   --manifests .tilewright/manifests/<KEY> \
-  --url http://localhost:<PORT> --api-key tcbmin
+  --url <URL> --api-key <API_KEY>          # always pass both: the defaults point at a local server
 ```
 
-Because that config allowlists the data root — `.tilewright/`'s own parent — every
-dataset onboarded under it is servable with **no config edit and no restart**. The
-layout is one catalog per data root, so give each root its own `uvicorn.port`.
-The repo-root `config.yml` is the legacy single-catalog setup for the shipped
-`examples/` corpus, which names each data directory explicitly; new datasets should
-use the `.tilewright/` layout instead.
+Whoever deploys that endpoint owns its `readable_storage` allowlist, and it is not
+yours to edit. If you have no endpoint — or the one you were given cannot resolve your
+paths — the skill's appendix covers running your own server for testing, including the
+impostor check that proves the server answering on the port is the one you started (a
+log line cannot). The repo-root `config.yml` is the legacy single-catalog setup for the
+shipped `examples/` corpus, which names each data directory explicitly; new datasets
+should use the `.tilewright/` layout instead.
 
 Registration alone does not prove much: it never opens the data, and the
 allowlist is only checked on read — so a dataset can register with `failed=0`
@@ -101,7 +99,7 @@ The dataset is now in the catalog:
 from tiled.client import from_uri
 from tiled.queries import Key
 
-c = from_uri("http://localhost:<PORT>", api_key="tcbmin")   # your root's uvicorn.port
+c = from_uri("<URL>", api_key="<API_KEY>")  # the endpoint you registered into
 list(c)                                     # dataset keys
 c["<KEY>"].search(Key("<param>") > 0)       # query entities by metadata
 ```

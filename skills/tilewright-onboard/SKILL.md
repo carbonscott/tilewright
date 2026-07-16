@@ -42,9 +42,6 @@ copy-pasted commands point at files that do not exist. The shipped
 `examples/datasets/` filenames predate this convention (`broad_sigma.yml` holds
 `key: BROAD_SIGMA`); copy their *structure*, not their naming.
 
-Keeping the manifest beside the data is what lets the **tilewright-register**
-skill allowlist the data root once and never edit a config again.
-
 ```bash
 cd <tilewright repo root>        # .../codes/tilewright — once, to build the env
 export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE   # S3DF only — omit elsewhere
@@ -178,7 +175,7 @@ trial passed both as pointer-only yet silently lost servable arrays.)
 ## STOP
 
 Done = Gate A ✅ + Gate B ✅ + soft gate cleared. **Do not run
-`tilewright register`** — registration, serving, and querying are deterministic,
+`tilewright register`** — registration and querying are deterministic,
 environment-coupled mechanics outside this skill's scope. They are the
 **tilewright-register** skill's job, and it starts where you stop: from
 `.tilewright/datasets/<KEY>.yml` and `.tilewright/manifests/<KEY>/`. Report

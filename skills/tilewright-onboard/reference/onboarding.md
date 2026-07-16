@@ -39,10 +39,8 @@ cd <data root>
 mkdir -p .tilewright/datasets .tilewright/manifests
 ```
 
-Keeping the manifest beside the data it describes is what lets the
-**tilewright-register** skill allowlist the data root once, so no dataset ever
-needs a config edit. Every relative path in this guide is anchored to the data
-root unless it says otherwise.
+Every relative path in this guide is anchored to the data root unless it says
+otherwise.
 
 ## The dataset YAML contract — field by field
 
@@ -96,13 +94,11 @@ source:
   (`readlink -f`), not through a symlink. Registration builds asset URIs from
   this string verbatim (`file://localhost{directory}/{file}`), and the server
   serves an asset only if that path is contained in an allowlisted root — a
-  comparison that never resolves symlinks. Put `.tilewright/` in the data root
-  and write `directory` physically, and the allowlist holds without ever naming
-  this dataset: `directory` is that root or sits beneath it, so the
-  **tilewright-register** skill's config covers it. A logical path that
-  symlinks into the root is still refused, and `directory` pointing outside the
-  root holding `.tilewright/` means a misplaced `.tilewright/` — neither is a
-  config to widen. Both fail only at first read, never at registration.
+  comparison that never resolves symlinks. A logical path that symlinks into an
+  allowlisted root is still refused, and so is a `directory` no allowlisted root
+  contains. Both fail only at first read, never at registration. That allowlist
+  belongs to whoever deploys the endpoint and is not yours to widen — writing
+  `directory` physically is what keeps the question from arising.
 - `pattern` (string, required) — glob relative to `directory`. Make it
   exclude non-HDF5 siblings (e.g. `*.h5` when the dir also holds `.nc`
   twins; `*/simulations.h5` to match one file per subdirectory).
@@ -409,17 +405,18 @@ locator columns]) and `artifacts.parquet`
 (`uid,type,file,dataset,index,shape,dtype`; empty-but-typed for table
 sources). Shape and dtype are captured now; registration never opens HDF5.
 
-**3. Serving and registering — not this skill.**
+**3. Registering — not this skill.**
 
-Onboarding stops at Gate B. Configuring the catalog, starting the server,
-registering the manifests, and proving an array reads back through HTTP belong
-to the **tilewright-register** skill, which begins exactly where you stop:
+Onboarding stops at Gate B. Registering the manifests into a catalog that is
+already running, and proving an array reads back through HTTP, belong to the
+**tilewright-register** skill, which begins exactly where you stop:
 `.tilewright/datasets/<KEY>.yml` + `.tilewright/manifests/<KEY>/`.
 
-Because `.tilewright/` sits inside the data root and that skill's config
-allowlists the data root itself, a newly onboarded dataset needs **no config
-edit and no server restart** to become servable. Nothing you do here has to
-anticipate the server.
+One thing you write here *does* have to anticipate the server: `directory:`.
+Registration emits that string verbatim into every asset URI, and the serving
+host does not have to call your files what you call them — a deployed pod may
+serve `/prjmaiqmag01/...` where the authoring host says `/sdf/...` for the same
+file. That skill's Gate 1 compares the two before anything is registered.
 
 **4. Tests** (from the tilewright repo root — these check the shipped corpus and
 the source budgets, not your dataset):
@@ -448,15 +445,14 @@ involved. Decode the common ones here before changing anything else:
 ## Using the catalog — raw tiled cheat sheet
 
 tiled's client IS the client; tilewright adds nothing on the HTTP path.
-`<PORT>` below is the `uvicorn.port` in that data root's `.tilewright/config.yml`
-— one catalog per data root, so each has its own (8017 is the conventional
-first).
+`<URL>` and `<API_KEY>` below are the endpoint you registered into — the same
+pair the **tilewright-register** skill was handed.
 
 ```python
 from tiled.client import from_uri
 from tiled.queries import Key
 
-c = from_uri("http://localhost:<PORT>", api_key="tcbmin")   # your root's uvicorn.port
+c = from_uri("<URL>", api_key="<API_KEY>")   # the endpoint you registered into
 list(c)                                   # dataset keys
 dict(c["BROAD_SIGMA"].metadata)           # dataset provenance metadata
 ds = c["BROAD_SIGMA"]
@@ -491,7 +487,7 @@ from tiled.client import from_uri
 from tiled.queries import Key
 from tilewright import client as tw
 
-c = from_uri("http://localhost:<PORT>", api_key="tcbmin")   # your root's uvicorn.port
+c = from_uri("<URL>", api_key="<API_KEY>")   # the endpoint you registered into
 ent = c["BROAD_SIGMA"].search(Key("sigma") >= 0.04).values().first()
 tw.locate(ent)      # {"rixs_spectrum": {"file": ..., "dataset": ..., "index": ...}}
 base = "/sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/RIXS_SIM_BROAD_SIGMA"
@@ -513,7 +509,7 @@ Needs a registered dataset on a running server — i.e. after the
 ```bash
 uv run --project <tilewright repo root> python - <<'EOF'
 from tiled.client import from_uri
-c = from_uri("http://localhost:<PORT>", api_key="tcbmin")   # your root's uvicorn.port
+c = from_uri("<URL>", api_key="<API_KEY>")   # the endpoint you registered into
 print(list(c))                          # dataset keys
 ds = c[list(c)[0]]
 ent = ds.values().first()
