@@ -23,7 +23,7 @@ from tilewright.manifest import (
     source_tag,
     validate,
 )
-from tilewright.register import _register_artifact
+from tilewright.register import _register_artifact, register_dataset
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -57,11 +57,11 @@ LOCAL = "/sdf/data/lcls/ds/prj/prjmaiqmag01/results"
 SERVER = "/prjmaiqmag01"
 
 
-def _cfg(**source_extra):
+def _cfg(**tag_extra):
     return {"key": "ls_static", "metadata": {"data_type": "spectra"},
             "source": {"files": {"directory": LOCAL, "pattern": "*.h5",
-                                 "params": {"group": "/p", "from": "attrs"}},
-                       **source_extra},
+                                 "params": {"group": "/p", "from": "attrs"},
+                                 **tag_extra}},
             "artifacts": [{"type": "spectrum", "dataset": "/spectra"}]}
 
 
@@ -130,3 +130,28 @@ def test_contract_concept_budget():
     assert TOP_LEVEL_KEYS == {"key", "metadata", "source", "artifacts"}, (
         "contract concept creep: the allowed top-level YAML keys changed"
     )
+
+
+def test_register_dataset_wires_server_base_into_registration(monkeypatch):
+    """The seam no other test defends: server_dir(cfg) -> _register_artifact.
+
+    Reverting register_dataset's `server_base = server_dir(cfg)` to the old
+    `cfg["source"][tag]["directory"]` is the exact regression this feature
+    exists to prevent, and every other test passes under it — they compose the
+    two halves themselves instead of making register_dataset do it.
+    """
+    import pandas as pd
+
+    seen = []
+    monkeypatch.setattr("tilewright.register.from_uri", lambda *a, **k: {})
+    monkeypatch.setattr("tilewright.register._register_one_entity",
+                        lambda parent, key, server_base, row, arts: seen.append(server_base) or (0, 0, 1, 0))
+
+    class _Client(dict):
+        def create_container(self, key, metadata):
+            return object()
+
+    monkeypatch.setattr("tilewright.register.from_uri", lambda *a, **k: _Client())
+    ent_df = pd.DataFrame([{"uid": "u1"}])
+    register_dataset(_cfg(server_base_dir=SERVER), ent_df, ent_df.iloc[0:0], "http://x", "k", max_workers=1)
+    assert seen == [SERVER], f"register_dataset passed {seen}, not the server's view {SERVER!r}"
