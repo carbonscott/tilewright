@@ -98,5 +98,5 @@ from tiled.queries import Key
 
 c = from_uri("http://localhost:8017", api_key="tcbmin")
 list(c)                                     # dataset keys
-c["<NAME>"].search(Key("<param>") > 0)      # query entities by metadata
+c["<KEY>"].search(Key("<param>") > 0)       # query entities by metadata
 ```

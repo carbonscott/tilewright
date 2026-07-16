@@ -411,7 +411,7 @@ sources). Shape and dtype are captured now; registration never opens HDF5.
 Onboarding stops at Gate B. Configuring the catalog, starting the server,
 registering the manifests, and proving an array reads back through HTTP belong
 to the **tilewright-register** skill, which begins exactly where you stop:
-`.tilewright/datasets/my_dataset.yml` + `.tilewright/manifests/MY_DATASET/`.
+`.tilewright/datasets/MY_DATASET.yml` + `.tilewright/manifests/MY_DATASET/`.
 
 Because `.tilewright/` sits inside the data root and that skill's config
 allowlists the data root itself, a newly onboarded dataset needs **no config

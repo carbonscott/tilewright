@@ -52,24 +52,32 @@ cd <data root>
 ls -d .tilewright          # must print .tilewright
 ```
 
-Then confirm the layout actually holds — that the data really is under this
-root, **compared as physical paths**. The allowlist check is pure string
-prefixing and does not resolve symlinks, while the server's idea of "here" is
-always physical. A logical `/sdf/...` path that symlinks elsewhere passes this
-eyeball test and fails at read:
+Then confirm the layout actually holds. Compare exactly the two strings the
+server will compare — and **do not resolve the YAML's path before comparing**,
+or you destroy the very signal you are looking for:
+
+- The asset URI is built from the **raw, unresolved** `directory:` string
+  (`file://localhost{directory}/{file}`).
+- `readable_storage: ["."]` becomes the **physical** cwd — `pwd -P`.
+- The allowlist test is a string prefix check that never resolves symlinks.
 
 ```bash
-grep -n 'directory:' .tilewright/datasets/<KEY>.yml
-readlink -f "$(grep -m1 'directory:' .tilewright/datasets/<KEY>.yml | awk '{print $2}')"
-pwd -P                     # the physical data root
+grep -m1 'directory:' .tilewright/datasets/<KEY>.yml   # the RAW string — what the URI uses
+pwd -P                                                 # what readable_storage "." becomes
 ```
 
-The resolved `directory:` must equal `pwd -P` or sit beneath it. If it does
-not, either `.tilewright/` is beside the wrong tree (move it), or `directory:`
-is a logical path through a symlink (make it physical — see triage). Do not
-skip this: registration will succeed either way, and only the first read fails.
-(A `table` source registers no assets at all, so nothing can be refused — this
-check has no consequence there.)
+**The raw `directory:` must equal `pwd -P` or sit literally beneath it.** If it
+does not, one of two things is true:
+
+- it points at an unrelated tree → `.tilewright/` is beside the wrong data;
+  move it;
+- `readlink -f <directory>` *does* land under `pwd -P` → it is a logical path
+  through a symlink. It will be refused anyway, because the check is textual.
+  Rewrite `directory:` as the physical path and regenerate the manifest.
+
+Do not skip this: registration succeeds either way, and only the first read
+fails. (A `table` source registers no assets at all, so nothing can be
+refused — this check has no consequence there.)
 
 The tilewright CLI is installed in the repo, not here. Reach it without leaving
 the data root — `--project` selects the environment and does **not** change the
@@ -82,12 +90,13 @@ uv run --project <tilewright repo root> tilewright ...
 
 ## Step 1 — write `.tilewright/config.yml`
 
-Copy this; the one value to consider changing is the port:
+Copy this and substitute `<PORT>` — one port per data root, since each root
+gets its own catalog and its own server. Everything else is verbatim:
 
 ```yaml
 uvicorn:
   host: "127.0.0.1"
-  port: 8017
+  port: <PORT>            # 8017 if this is your only data root
 trees:
   - path: /
     tree: catalog
@@ -127,34 +136,42 @@ Creates `.tilewright/catalog.db` on first run.
 ### Gate 1 — the server answering is *the one you started*
 
 A curl that gets a reply proves *a* server is up, not *your* server. If a stale
-server from another data root already owns the port, yours exits with `address
-already in use`, the curl below answers from the impostor, registration writes
-into **its** catalog, and Gate 3 reads back somebody else's array — all three
-gates green, nothing registered where you intended. Check your own log first:
+server from another data root already owns the port, yours dies on `address
+already in use`, the curl answers from the impostor, registration writes into
+**its** catalog, and Gate 3 reads back somebody else's array — all three gates
+green, nothing registered where you intended.
+
+**Do not use `Application startup complete` as the signal.** Uvicorn prints it
+*before* it attempts the bind, so it appears even in a log whose very next line
+is the bind failure. The only trustworthy evidence is the **absence** of the
+error and a process that is still alive:
 
 ```bash
-grep -q "address already in use" .tilewright/server.log && echo "PORT TAKEN — pick another in config.yml"
-grep -q "Application startup complete" .tilewright/server.log && echo "my server is up"
-curl -s -H "Authorization: Apikey tcbmin" http://127.0.0.1:8017/api/v1/metadata/ | head -c 80
+grep -q "address already in use" .tilewright/server.log \
+  && echo "PORT TAKEN — your server is NOT running; change uvicorn.port and re-serve" \
+  || echo "port clear"
+curl -s -H "Authorization: Apikey tcbmin" http://127.0.0.1:<PORT>/api/v1/metadata/ | head -c 80
 ```
 
-**Gate 1 passes only when your own log shows `Application startup complete`,
-shows no `address already in use`, and the curl answers.** A restart is needed
-only if you edit `config.yml` — which, per the layout above, adding a dataset
-never requires.
+**Gate 1 passes only when the log has no `address already in use`, the serve
+terminal is still running (it has not returned to a prompt), and the curl
+answers.** If the port was taken, nothing you do afterwards touches your own
+catalog. A restart is needed only if you edit `config.yml` — which, per the
+layout above, adding a dataset never requires.
 
 ## Step 3 — Gate 2: register
 
 ```bash
 uv run --project <tilewright repo root> tilewright register .tilewright/datasets/<KEY>.yml \
-    --manifests .tilewright/manifests/<KEY> --url http://localhost:8017 --api-key tcbmin
+    --manifests .tilewright/manifests/<KEY> --url http://localhost:<PORT> --api-key tcbmin
 ```
 
 ```
 dataset=<KEY> entities_added=<N> artifacts_added=<M> skipped=0 failed=0
 ```
 
-**Gate 2 passes only when, against a fresh catalog, all three hold:**
+**On a first registration — a fresh catalog, or one you just deleted the
+container from — Gate 2 passes only when all three hold:**
 
 1. `failed=0`,
 2. `entities_added` + `skipped` equals Gate B's `entities=` count, **and**
@@ -163,6 +180,11 @@ dataset=<KEY> entities_added=<N> artifacts_added=<M> skipped=0 failed=0
 Check 3 is not redundant. Entity and artifact failures land in the same
 `failed` tally, so the entity arithmetic can look perfect while every artifact
 broke.
+
+On a *deliberate re-run* of an already-complete dataset, expect
+`entities_added=0 artifacts_added=0 skipped=<N> failed=0` — check 3 does not
+apply, and nothing in this summary can distinguish "already complete" from
+"silently broken". Only Gate 3 can. Re-run means re-read.
 
 **Read the summary line, never the exit code.** `tilewright register` exits 0
 even when every row failed: errors are caught, printed to stderr as `FAILED
@@ -180,7 +202,7 @@ before re-registering:**
 ```bash
 uv run --project <tilewright repo root> python -c "
 from tiled.client import from_uri
-c = from_uri('http://localhost:8017', api_key='tcbmin')
+c = from_uri('http://localhost:<PORT>', api_key='tcbmin')
 c['<KEY>'].delete(recursive=True)   # NOT del c['<KEY>'] — containers reject item deletion
 print('deleted <KEY>; catalog keys now:', list(c))
 "
@@ -197,7 +219,7 @@ on a dataset the server cannot read a single byte of. Prove the bytes flow:
 ```bash
 uv run --project <tilewright repo root> python -c "
 from tiled.client import from_uri
-c = from_uri('http://localhost:8017', api_key='tcbmin')
+c = from_uri('http://localhost:<PORT>', api_key='tcbmin')
 ent = next(iter(c['<KEY>']))              # first entity
 art = next(iter(c['<KEY>'][ent]))         # first artifact
 arr = c['<KEY>'][ent][art][:]             # <- the read-back
