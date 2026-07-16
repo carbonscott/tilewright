@@ -48,10 +48,10 @@ unresolved** `directory:` string in your YAML:
 file://localhost{directory}/{file}
 ```
 
-There is **no mapping layer**. The endpoint must see that identical absolute
-path, or it can never open your data. The authoring host and the serving host
-are not the same machine, and they do not have to agree about what a file is
-called.
+The endpoint must see that identical absolute path, or it can never open your
+data. The authoring host and the serving host are not the same machine, and
+they do not have to agree about what a file is called — when they disagree,
+`server_base_dir` is what reconciles them, and the next section shows how.
 
 Ask the endpoint what path its existing assets carry. Only leaf array nodes hold
 assets, so this walks down to the first one it finds — a `data_uri` is not
@@ -92,8 +92,8 @@ grep -m1 'directory:' .tilewright/datasets/<KEY>.yml
 ```
 
 **Gate 1 passes only if the endpoint's prefix and your `directory:` describe the
-same absolute path.** If they differ, stop here and read the next section — do
-not register.
+same absolute path**, or you set `server_base_dir` to bridge them. If they
+differ, read the next section before you register — not after.
 
 Three things this gate cannot tell you, so do not over-read it:
 
@@ -109,10 +109,10 @@ Three things this gate cannot tell you, so do not over-read it:
   locates a sidecar Parquet, which is read at registration and never served.
   Gate 1 does not apply to them, and a path mismatch cannot hurt them.
 
-### When the prefixes differ — the blocker
+### When the prefixes differ — set `server_base_dir`
 
-This is not a config error you can fix, and it is not something the endpoint's
-operator can fix for you. It is a known gap in `tilewright/register.py`.
+Differing is normal, not broken. A deployed pod mounts the same bytes somewhere
+else, and nothing about your data is wrong.
 
 **Measured on the MAIQMag deployment (2026-07), for one and the same file:**
 
@@ -126,23 +126,33 @@ operator can fix for you. It is a known gap in `tilewright/register.py`.
 `/sdf`. The pod reads its own path fine — the two hosts simply disagree about
 what that file is called.
 
-`tilewright register` would emit the `/sdf` form, which the endpoint cannot
-open. **The missing piece is the `server_base_dir` mapping** — an optional YAML
-key that says "the server calls this directory something else", joined into the
-URI at registration. It was deliberately cut on the assumption that authoring
-host == serving host, and that assumption does not hold for a deployed pod. See
-`.ai/docs/FINDINGS.md` ("`server_base_dir` path mapping") for the re-entry path.
+Tell the dataset what the server calls its directory. Beside `directory:`, in
+the same `files:` or `batch:` block:
 
-Until that key exists, **`files` and `batch` datasets cannot be served from an
-endpoint whose path view differs from yours.** Do not try to work around it by
-writing the server's path into `directory:` — that same string is what
-manifest generation opens locally, so a path that only exists on the server
-breaks Gate B before you ever get here. Decoupling those two readers is
-precisely what `server_base_dir` is for.
+```yaml
+source:
+  files:
+    directory: /sdf/data/lcls/ds/prj/prjmaiqmag01/results/LS/static   # what YOU open
+    server_base_dir: /prjmaiqmag01/LS/static                          # what the SERVER opens
+    pattern: "*.h5"
+```
 
-What to do instead: say so in your report, and stop. `table` datasets are
-unaffected and may proceed. To exercise the gates end-to-end meanwhile, run
-your own server against your own paths — see the appendix.
+`server_base_dir` replaces `directory:` **only** when building the asset URI.
+Everything that reads your files locally — manifest generation, onboard's Gate
+B — keeps using `directory:`. That split is the whole point: one string cannot
+be both, which is why writing the server's path into `directory:` is not a
+workaround. It would break Gate B before you ever got here, because that path
+does not exist on your host.
+
+Derive the value from Gate 1's output, not from a guess: take the prefix the
+endpoint printed and give it the same tail your `directory:` has. Absent the
+key, the URI is byte-identical to before — so leave it out when the prefixes
+already agree, and `table` datasets never need it at all.
+
+**An absolute-but-wrong value is validated and still fails.** The check rejects
+a relative path and `..`; it cannot know what the pod mounts. A typo here
+registers clean and dies at Gate 3 as the same bare 500. Gate 3 is what proves
+you got it right.
 
 ## Gate 2 — register
 
@@ -261,8 +271,8 @@ unexplained 500.
 
 **What to do — in order:**
 
-1. Re-run Gate 1. Differing prefixes are the blocker above, not an allowlist
-   problem.
+1. Re-run Gate 1. Differing prefixes are a `server_base_dir` problem, not an
+   allowlist problem.
 2. Confirm `directory:` is physical, not a logical path through a symlink (the
    containment test compares paths as written and never resolves them). Rewrite
    it physically, regenerate, delete the container, re-register.
@@ -282,7 +292,7 @@ you *can* see.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Gate 1 shows the endpoint's prefix differs from your `directory:` | Authoring host and serving host disagree about the absolute path | The blocker above. `server_base_dir` does not exist yet; report and stop. `table` datasets are unaffected |
+| Gate 1 shows the endpoint's prefix differs from your `directory:` | Authoring host and serving host disagree about the absolute path | Set `server_base_dir` beside `directory:` to the server's view, delete the container if you already registered, re-register. `table` datasets never need it |
 | Gate 2 prints `FAILED artifact ...: 415: The given data source mimetype, application/x-hdf5-broker, is not one that the Tiled server knows how to read` | The endpoint has no adapter bound for the broker mimetype — this fails at **registration**, not at read | Not fixable from your side on a foreign endpoint; ask the operator, then delete the container and re-register (Gate 2) |
 | Gate 3 returns a bare **500**, `{"detail":"Internal server error"}` | Ambiguous by construction — path view, allowlist, adapter, or an unreadable file. The explanatory line is in the server's log, which you cannot read | Work the ordered list in the allowlist section above. Do not guess |
 | `httpx.ConnectError` / connection refused | Wrong `<URL>`, or the endpoint is unreachable from this host | Some endpoints resolve only from inside the facility network. Check reachability before blaming the catalog |
@@ -309,7 +319,7 @@ path through a symlink), per step 2 above. Onboard's gates cannot catch that one
 
 **You do not need this section to use the skill.** It exists for one case:
 exercising the gates end-to-end when you have no endpoint, or when the endpoint
-you were given cannot serve your paths (the blocker above). A server you run
+you were given cannot serve your paths. A server you run
 yourself, on the host where the data lives, is the one place where authoring
 view and serving view are guaranteed to agree.
 
