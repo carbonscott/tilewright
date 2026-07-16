@@ -4,10 +4,11 @@ Run from the repo root:
 
     uv run --with pytest pytest tests/ -v
 
-Three budgets are enforced here:
+Four checks are enforced here:
   1. the proof corpus generates exactly the expected entity/artifact counts;
   2. total source LOC in tilewright/ stays <= 750;
-  3. the contract's top-level concept set never grows past 4 keys.
+  3. the contract's top-level concept set never grows past 4 keys;
+  4. every skill's frontmatter still parses and names its own directory.
 
 Budget 1 reads the real corpus under /sdf, so it runs only where that data is
 mounted (e.g. sdfiana025); elsewhere those cases skip — an unmounted
@@ -72,13 +73,14 @@ def test_contract_concept_budget():
     )
 
 
-@pytest.mark.parametrize("skill_dir", sorted(p.name for p in (REPO / "skills").iterdir()))
+@pytest.mark.parametrize("skill_dir", sorted(p.name for p in (REPO / "skills").iterdir() if p.is_dir()))
 def test_skill_frontmatter(skill_dir):
     """A skill's frontmatter is a machine contract, and it is written in prose.
 
-    An unquoted ": " anywhere in the description silently turns it into a
-    mapping and the skill stops loading — a failure no amount of proofreading
-    catches, because the text still reads correctly.
+    An unquoted ": " anywhere in the description makes PyYAML read a mapping
+    where a string was meant and raise ScannerError, so the skill stops loading
+    entirely — a failure no amount of proofreading catches, because the
+    sentence still reads correctly.
     """
     yaml = pytest.importorskip("yaml")
     body = (REPO / "skills" / skill_dir / "SKILL.md").read_text()

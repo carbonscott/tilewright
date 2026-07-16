@@ -1,6 +1,6 @@
 ---
 name: tilewright-onboard
-description: Onboard a new, structure-unknown scientific dataset into a tilewright Tiled catalog — inspect the data, choose the source archetype (files | batch | table), author and validate the dataset YAML, then generate its Parquet manifest with entity/artifact counts you predicted, and STOP before registration. Use when a dataset directory needs a tilewright manifest and its layout is not yet described (per-file HDF5, batched HDF5, or pointer-only non-HDF5/remote data). Do NOT use for querying, reading, serving, or registering datasets already in the catalog, or for a dataset that already has a manifest.
+description: Onboard a new, structure-unknown scientific dataset into a tilewright Tiled catalog — inspect the data, choose the source archetype (files | batch | table), author and validate the dataset YAML, then generate its Parquet manifest with entity/artifact counts you predicted, and STOP before registration. Use when a dataset directory needs a tilewright manifest and its layout is not yet described (per-file HDF5, batched HDF5, or pointer-only non-HDF5/remote data). Do NOT use for querying, reading, serving, or registering datasets already in the catalog, or for a dataset whose manifest already cleared Gate B. DO use it to re-model a dataset whose manifest is wrong — bad params, wrong counts, wrong source archetype — even though the files exist; a failed Gate B still leaves manifests on disk, and re-modelling is this skill's job, not tilewright-register's.
 allowed-tools: Read, Write, Edit, Bash
 ---
 
