@@ -19,14 +19,28 @@ exact types or fail loud.
 
 ## Prerequisites
 
-You are on a host that can see the data (e.g. sdfiana025). Always export
-the uv cache first, and run everything from the repo root:
+You are on a host that can see the data (e.g. sdfiana025). Build the
+environment once from the repo root:
 
 ```bash
-cd /sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/codes/tilewright
-export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE
+cd <tilewright repo root>        # e.g. /sdf/.../cwang31/codes/tilewright
+export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE   # S3DF only — omit elsewhere
 uv sync          # once, creates .venv with tiled 0.2.x + deps
 ```
+
+Then **work from the data root** — the directory holding the dataset you are
+onboarding — and reach the CLI there with `uv run --project <tilewright repo
+root> ...`, which selects the environment without changing the working
+directory. Your outputs go in a `.tilewright/` directory inside that data
+root:
+
+```bash
+cd <data root>
+mkdir -p .tilewright/datasets .tilewright/manifests
+```
+
+Every relative path in this guide is anchored to the data root unless it says
+otherwise.
 
 ## The dataset YAML contract — field by field
 
@@ -76,10 +90,15 @@ source:
     params: {group: "/", from: attrs}
 ```
 
-- `directory` (string, required) — absolute path. Registration builds asset
-  URIs as `file://localhost{directory}/{file}`, and the **server's**
-  `config.yml` must list this directory (or a parent) under
-  `readable_storage` or reads will be refused.
+- `directory` (string, required) — absolute path, and write it **physical**
+  (`readlink -f`), not through a symlink. Registration builds asset URIs from
+  this string verbatim (`file://localhost{directory}/{file}`), and the server
+  serves an asset only if that path is contained in an allowlisted root — a
+  comparison that never resolves symlinks. A logical path that symlinks into an
+  allowlisted root is still refused, and so is a `directory` no allowlisted root
+  contains. Both fail only at first read, never at registration. That allowlist
+  belongs to whoever deploys the endpoint and is not yours to widen — writing
+  `directory` physically is what keeps the question from arising.
 - `pattern` (string, required) — glob relative to `directory`. Make it
   exclude non-HDF5 siblings (e.g. `*.h5` when the dir also holds `.nc`
   twins; `*/simulations.h5` to match one file per subdirectory).
@@ -193,7 +212,8 @@ ls -la /abs/path/to/dataset_dir      # .nc twins? .parquet sidecars? .gz? subdir
 **Step 2 — dump one candidate file completely** (every dataset's shape/dtype
 and every attribute at every level, groups included):
 
-```python
+```bash
+uv run --project <tilewright repo root> python - <<'EOF'
 import h5py
 fp = "/abs/path/to/one_matched_file.h5"
 with h5py.File(fp, "r") as f:
@@ -207,6 +227,7 @@ with h5py.File(fp, "r") as f:
         for k, v in obj.attrs.items():
             print(f"attr /{name}@{k} = {v!r}")
     f.visititems(dump)
+EOF
 ```
 
 **Step 3 — read your observations off this table:**
@@ -358,49 +379,53 @@ physics params plus `globus_url` etc.; there are no array children.
 
 ## Commands
 
-All from the repo root, with `UV_CACHE_DIR` exported (see Prerequisites).
+All from the **data root** (the directory holding `.tilewright/`) unless a step
+says otherwise (on S3DF, with `UV_CACHE_DIR` exported — see Prerequisites). `--project`
+points uv at the tilewright checkout for the environment; it does not change
+the working directory, so the relative paths below stay anchored to the data
+root.
+
+`<KEY>` below is the `key:` value inside the dataset YAML (e.g. `BROAD_SIGMA`).
+Name the YAML file and the manifest directory after it, exactly.
 
 **1. Validate the contract only (touches no data):**
 ```bash
-uv run tilewright manifest examples/datasets/my_dataset.yml --check
+uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/<KEY>.yml --check
 # -> contract OK: key=... source=files|batch|table artifacts=N
 # invalid -> every error printed ("source.table requires 'id' ..."), exit 1
 ```
 
 **2. Generate manifests:**
 ```bash
-uv run tilewright manifest examples/datasets/my_dataset.yml -o examples/manifests/MY_DATASET
-# -> dataset=MY_DATASET entities=N artifacts=M -> examples/manifests/MY_DATASET/...
+uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/<KEY>.yml -o .tilewright/manifests/<KEY>
+# -> dataset=<KEY> entities=N artifacts=M -> .tilewright/manifests/<KEY>/...
 ```
 This writes `entities.parquet` (uid + one column per parameter [+ extra,
 locator columns]) and `artifacts.parquet`
 (`uid,type,file,dataset,index,shape,dtype`; empty-but-typed for table
 sources). Shape and dtype are captured now; registration never opens HDF5.
 
-**3. Start the server** (its own terminal; leave it running):
-```bash
-uv run tiled serve config config.yml --api-key tcbmin
-# serves http://127.0.0.1:8017; creates ./catalog.db on first run
-```
-Read-only pre-check (no config edit needed): `grep -A8 readable_storage
-config.yml` and confirm your dataset directory or a parent is listed. If it
-is not, add it — and note config edits take effect only after a server
-restart.
+**3. Registering — not this skill.**
 
-**4. Register:**
-```bash
-uv run tilewright register examples/datasets/my_dataset.yml \
-    --manifests examples/manifests/MY_DATASET --url http://localhost:8017 --api-key tcbmin
-# -> dataset=MY_DATASET entities_added=N artifacts_added=M skipped=0 failed=0
-```
-A bare `Retrying...` on stderr from the tiled client is a harmless
-transient — ignore it as long as the summary line shows `failed=0`.
-Re-running is safe: an already-complete entity counts as `skipped`. An
-entity whose array-children count disagrees with the manifest (a crashed
-earlier run) prints a loud WARNING and counts as `failed` — delete it and
-re-register.
+Onboarding stops at Gate B. Registering the manifests into a catalog that is
+already running, and proving an array reads back through HTTP, belong to the
+**tilewright-register** skill, which begins exactly where you stop:
+`.tilewright/datasets/<KEY>.yml` + `.tilewright/manifests/<KEY>/`.
 
-**5. Tests:**
+One thing you write here *does* have to anticipate the server: `directory:`.
+Registration emits that string into every asset URI, and the serving host does
+not have to call your files what you call them — a deployed pod may serve
+`/prjmaiqmag01/...` where the authoring host says `/sdf/...` for the same file.
+That skill's Gate 1 compares the two before anything is registered.
+
+Write `directory:` as **your** view regardless, physically. It is what opens
+your files here, and it is the only view you can verify. When the server's view
+differs, the register skill's `server_base_dir` reconciles the two — a separate
+optional key beside `directory:`, precisely so one string never has to mean
+both.
+
+**4. Tests** (from the tilewright repo root — these check the shipped corpus and
+the source budgets, not your dataset):
 ```bash
 uv run --with pytest pytest tests/ -v     # offline: corpus counts + budgets
 uv run python tests/verify_live.py        # manual: needs the server running
@@ -415,7 +440,9 @@ involved. Decode the common ones here before changing anything else:
 |---|---|---|
 | `OSError: ... file signature not found` / `<file>: cannot open as HDF5` | `pattern` matched a non-HDF5 sibling (a `.nc` twin, a Parquet sidecar) | Tighten `pattern` (e.g. `"*.h5"`); re-check step 1 of the inspection protocol |
 | Bare `KeyError: "... object 'X' doesn't exist"` with **no filename** | An HDF5 path is wrong in your own snippet (generation always prefixes the filename: `<file>: <yaml key> '/X' not found in file` means that path is absent in that matched file) | Run the step-2 dump on the named file; fix the group/dataset path in the YAML |
-| `<file>: no params at group='...' from=...` | Wrong `group`, wrong `from` (attrs vs datasets), or the "scalars" are `(1,)`-shaped, which `from: datasets` skips | Check the dump: attrs on the group → `from: attrs`; `shape=()` datasets → `from: datasets`; `(1,)` shapes → unsupported, stop and report; genuinely no params anywhere in the file → `params: null` (explicit opt-in, step-3 table) |
+| `<file>: no params at group='...' from=...` | **files only.** Wrong `group`, wrong `from` (attrs vs datasets), or the "scalars" are `(1,)`-shaped, which `from: datasets` skips | Check the dump: attrs on the group → `from: attrs`; `shape=()` datasets → `from: datasets`; `(1,)` shapes → unsupported, stop and report; genuinely no params anywhere in the file → `params: null` (explicit opt-in, step-3 table) |
+| `<file>: no (N,) datasets under <group>` | **batch only.** The `params.group` holds no 1-D datasets, so there is nothing to key entities by — often the group is wrong, or the params are scalars, which means the dataset is `files`, not `batch` | Re-read the dump: `batch` requires `(N,)` datasets under `group` whose N matches the artifacts' leading axis. Scalar params instead → it is a `files` dataset; go back to the step-2 table |
+| `<file>: param <name> shape (...), expected leading axis N` | **batch only.** One dataset under `params.group` is not axis-0-matched with the entities | That dataset is not a per-entity param. Move it out of `group`, or record it in `metadata` yourself as a shared entry (e.g. `shared_eloss: /eloss`) |
 | `sidecar column 'uid' is reserved` | The table sidecar carries a `uid` column — that name is the provenance hash | Rebuild the sidecar with the column renamed (e.g. `producer_uid`) or dropped, point `path` at the rebuilt file |
 | `pyarrow.lib.ArrowInvalid` while writing manifests | One param changes type/shape across files (scalar in one file, array or string in another) | Dump two files and diff their params; fix the inconsistent one or report |
 | `uid collision: N duplicate provenance ids` | Table `id` column is not unique (all-NaN ids hash identically), or duplicate rows | Choose a genuinely unique id column; dedupe the sidecar |
@@ -424,12 +451,14 @@ involved. Decode the common ones here before changing anything else:
 ## Using the catalog — raw tiled cheat sheet
 
 tiled's client IS the client; tilewright adds nothing on the HTTP path.
+`<URL>` and `<API_KEY>` below are the endpoint you registered into — the same
+pair the **tilewright-register** skill was handed.
 
 ```python
 from tiled.client import from_uri
 from tiled.queries import Key
 
-c = from_uri("http://localhost:8017", api_key="tcbmin")
+c = from_uri("<URL>", api_key="<API_KEY>")   # the endpoint you registered into
 list(c)                                   # dataset keys
 dict(c["BROAD_SIGMA"].metadata)           # dataset provenance metadata
 ds = c["BROAD_SIGMA"]
@@ -464,7 +493,7 @@ from tiled.client import from_uri
 from tiled.queries import Key
 from tilewright import client as tw
 
-c = from_uri("http://localhost:8017", api_key="tcbmin")
+c = from_uri("<URL>", api_key="<API_KEY>")   # the endpoint you registered into
 ent = c["BROAD_SIGMA"].search(Key("sigma") >= 0.04).values().first()
 tw.locate(ent)      # {"rixs_spectrum": {"file": ..., "dataset": ..., "index": ...}}
 base = "/sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/RIXS_SIM_BROAD_SIGMA"
@@ -479,10 +508,14 @@ tw.locate(cn)["globus_url"]
 
 ## Verify
 
+Needs a registered dataset on a running server — i.e. after the
+**tilewright-register** skill has done its job, not at the end of onboarding.
+`--project` keeps this runnable from the data root:
+
 ```bash
-uv run python - <<'EOF'
+uv run --project <tilewright repo root> python - <<'EOF'
 from tiled.client import from_uri
-c = from_uri("http://localhost:8017", api_key="tcbmin")
+c = from_uri("<URL>", api_key="<API_KEY>")   # the endpoint you registered into
 print(list(c))                          # dataset keys
 ds = c[list(c)[0]]
 ent = ds.values().first()

@@ -25,8 +25,10 @@ re-downloads:
 export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE
 ```
 
-Run the CLI with `uv run tilewright <command>` (or `uv tool install .` for a bare
-`tilewright`). There are two commands, each self-documenting via `--help`:
+Run the CLI from your data root with `uv run --project <tilewright repo root>
+tilewright <command>` (or `uv tool install .` for a bare `tilewright`).
+`--project` selects the environment without changing the working directory.
+There are two commands, each self-documenting via `--help`:
 
 | command | does |
 |---|---|
@@ -42,36 +44,54 @@ skill (`skills/tilewright-onboard/` — a Claude Code skill; point Claude at it,
 symlink into `~/.claude/skills/`) on the dataset directory. The agent inspects the
 data, chooses one source archetype, authors the dataset YAML, and generates the
 Parquet manifest with the entity/artifact counts it predicted first — then **stops
-before registration**. Its work passes two machine-checkable gates:
+before registration**.
+
+Its outputs land in a `.tilewright/` directory **inside the data root**, so the
+manifest travels with the data it describes. `<KEY>` is the YAML's own `key:`
+value; the file and the manifest directory are both named after it. Its work
+passes two machine-checkable gates:
 
 ```bash
-uv run tilewright manifest examples/datasets/<name>.yml --check                        # Gate A: contract OK
-uv run tilewright manifest examples/datasets/<name>.yml -o examples/manifests/<NAME>    # Gate B: counts
+cd <data root>            # the directory holding your data, not the code tree
+uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/<KEY>.yml --check                     # Gate A: contract OK
+uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/<KEY>.yml -o .tilewright/manifests/<KEY>  # Gate B: counts
 ```
 
-The result is a validated `examples/datasets/<name>.yml` and
-`examples/manifests/<NAME>/{entities,artifacts}.parquet`.
+The result is a validated `.tilewright/datasets/<KEY>.yml` and
+`.tilewright/manifests/<KEY>/{entities,artifacts}.parquet`.
 
 The YAML contract is a tagged union — `source: files | batch | table` — plus a
 `key`, provenance `metadata`, and an `artifacts` list. See `examples/datasets/` for
 worked examples and `skills/tilewright-onboard/reference/onboarding.md` for the full
-field reference.
+field reference. Copy their *structure*, not their filenames: those predate the
+`<KEY>` convention above (`broad_sigma.yml` holds `key: BROAD_SIGMA`).
 
-### 2. Serve
+### 2. Register — the `tilewright-register` skill
 
-Start the Tiled server once. It reads `config.yml` and serves on `127.0.0.1:8017`:
+Run the **`tilewright-register`** skill (`skills/tilewright-register/`). You hand it
+a Tiled endpoint that is **already running** — its `<URL>` and an `<API_KEY>` carrying
+write scopes; the skill does not start a server. It first proves the endpoint resolves
+the same absolute paths your manifests carry, then registers, then reads one array
+back through HTTP to prove the bytes actually flow:
 
 ```bash
-uv run tiled serve config config.yml --api-key tcbmin
+cd <data root>
+uv run --project <tilewright repo root> tilewright register .tilewright/datasets/<KEY>.yml \
+  --manifests .tilewright/manifests/<KEY> \
+  --url <URL> --api-key <API_KEY>          # always pass both: the defaults point at a local server
 ```
 
-### 3. Register
+Whoever deploys that endpoint owns its `readable_storage` allowlist, and it is not
+yours to edit. If you have no endpoint — or the one you were given cannot resolve your
+paths — the skill's appendix covers running your own server for testing, including the
+impostor check that proves the server answering on the port is the one you started (a
+log line cannot). The repo-root `config.yml` is the legacy single-catalog setup for the
+shipped `examples/` corpus, which names each data directory explicitly; new datasets
+should use the `.tilewright/` layout instead.
 
-```bash
-uv run tilewright register examples/datasets/<name>.yml \
-  --manifests examples/manifests/<NAME> \
-  --url http://localhost:8017 --api-key tcbmin
-```
+Registration alone does not prove much: it never opens the data, and the
+allowlist is only checked on read — so a dataset can register with `failed=0`
+and serve nothing. That is why the skill's last gate reads an array back.
 
 The dataset is now in the catalog:
 
@@ -79,7 +99,7 @@ The dataset is now in the catalog:
 from tiled.client import from_uri
 from tiled.queries import Key
 
-c = from_uri("http://localhost:8017", api_key="tcbmin")
+c = from_uri("<URL>", api_key="<API_KEY>")  # the endpoint you registered into
 list(c)                                     # dataset keys
-c["<NAME>"].search(Key("<param>") > 0)      # query entities by metadata
+c["<KEY>"].search(Key("<param>") > 0)       # query entities by metadata
 ```
