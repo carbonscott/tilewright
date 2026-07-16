@@ -78,7 +78,7 @@ root's own port):
 ```bash
 cd <data root>
 nohup uv run --project <tilewright repo root> tiled serve config .tilewright/config.yml \
-  --api-key tcbmin > .tilewright/server.log 2>&1 &          # then check the log actually bound
+  --api-key tcbmin > .tilewright/server.log 2>&1 &          # then run the skill's Gate 1 — a log line cannot prove your server owns the port
 uv run --project <tilewright repo root> tilewright register .tilewright/datasets/<KEY>.yml \
   --manifests .tilewright/manifests/<KEY> \
   --url http://localhost:<PORT> --api-key tcbmin
@@ -101,7 +101,7 @@ The dataset is now in the catalog:
 from tiled.client import from_uri
 from tiled.queries import Key
 
-c = from_uri("http://localhost:8017", api_key="tcbmin")
+c = from_uri("http://localhost:<PORT>", api_key="tcbmin")   # your root's uvicorn.port
 list(c)                                     # dataset keys
 c["<KEY>"].search(Key("<param>") > 0)       # query entities by metadata
 ```

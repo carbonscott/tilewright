@@ -44,9 +44,12 @@ def test_corpus_counts(tmp_path, yaml_rel, n_entities, n_artifacts):
     cfg = load_config(REPO / yaml_rel)
     directory = Path(cfg["source"][source_tag(cfg)]["directory"])
     # Skip only where the corpus filesystem itself is absent (a laptop, CI). If
-    # the mount IS here, the dataset must be too: a missing directory is then a
-    # real regression, so fall through and let generation fail loudly rather
-    # than skipping the budget that this suite exists to enforce.
+    # it IS here, the dataset must be too: a missing directory is then a real
+    # regression, so fall through and let generation fail loudly rather than
+    # skipping the budget this suite exists to enforce. Note this is the first
+    # path component, not a true mount point — a host that has /sdf but lacks
+    # the corpus subtree will fail rather than skip, which errs toward noise
+    # over silence.
     mount = Path(*directory.parts[:2])  # e.g. /sdf
     if not mount.exists():
         pytest.skip(f"proof-corpus filesystem {mount} not mounted on this host")

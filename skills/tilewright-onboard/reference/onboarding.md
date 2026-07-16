@@ -23,7 +23,7 @@ You are on a host that can see the data (e.g. sdfiana025). Build the
 environment once from the repo root:
 
 ```bash
-cd /sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/codes/tilewright
+cd <tilewright repo root>        # e.g. /sdf/.../cwang31/codes/tilewright
 export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE   # S3DF only — omit elsewhere
 uv sync          # once, creates .venv with tiled 0.2.x + deps
 ```
@@ -446,12 +446,15 @@ involved. Decode the common ones here before changing anything else:
 ## Using the catalog — raw tiled cheat sheet
 
 tiled's client IS the client; tilewright adds nothing on the HTTP path.
+`<PORT>` below is the `uvicorn.port` in that data root's `.tilewright/config.yml`
+— one catalog per data root, so each has its own (8017 is the conventional
+first).
 
 ```python
 from tiled.client import from_uri
 from tiled.queries import Key
 
-c = from_uri("http://localhost:8017", api_key="tcbmin")
+c = from_uri("http://localhost:<PORT>", api_key="tcbmin")   # your root's uvicorn.port
 list(c)                                   # dataset keys
 dict(c["BROAD_SIGMA"].metadata)           # dataset provenance metadata
 ds = c["BROAD_SIGMA"]
@@ -486,7 +489,7 @@ from tiled.client import from_uri
 from tiled.queries import Key
 from tilewright import client as tw
 
-c = from_uri("http://localhost:8017", api_key="tcbmin")
+c = from_uri("http://localhost:<PORT>", api_key="tcbmin")   # your root's uvicorn.port
 ent = c["BROAD_SIGMA"].search(Key("sigma") >= 0.04).values().first()
 tw.locate(ent)      # {"rixs_spectrum": {"file": ..., "dataset": ..., "index": ...}}
 base = "/sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/RIXS_SIM_BROAD_SIGMA"
@@ -508,7 +511,7 @@ Needs a registered dataset on a running server — i.e. after the
 ```bash
 uv run --project <tilewright repo root> python - <<'EOF'
 from tiled.client import from_uri
-c = from_uri("http://localhost:8017", api_key="tcbmin")
+c = from_uri("http://localhost:<PORT>", api_key="tcbmin")   # your root's uvicorn.port
 print(list(c))                          # dataset keys
 ds = c[list(c)[0]]
 ent = ds.values().first()

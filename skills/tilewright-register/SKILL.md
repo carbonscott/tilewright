@@ -1,6 +1,6 @@
 ---
 name: tilewright-register
-description: Register an already-manifested tilewright dataset into a Tiled catalog and prove it serves — lay out .tilewright/config.yml so the data root is its own allowlist, start the server, register the Parquet manifests over HTTP, then read one array back through the server to prove the bytes flow. Use when a dataset already has a validated dataset YAML and manifest (the tilewright-onboard skill's Gate B has passed) and it now needs to be in the catalog and queryable. Do NOT use to author or fix a dataset YAML, to generate manifests, or to onboard a dataset whose structure is not yet described — that is tilewright-onboard.
+description: Register an already-manifested tilewright dataset into a Tiled catalog and prove it serves — lay out .tilewright/config.yml so the data root is its own allowlist, start the server, register the Parquet manifests over HTTP, then read one array back through the server to prove the bytes flow. Use when a dataset already has a validated dataset YAML and manifest (the tilewright-onboard skill's Gate B has passed) and it now needs to be in the catalog and queryable. Do NOT use to fix a dataset YAML's modelling (contract, params, entity/artifact counts) or to onboard a dataset whose structure is not yet described — that is tilewright-onboard. The one exception: a directory: that is wrong as a path (logical/symlinked) is this skill's to fix and regenerate, because onboard's gates both pass on it.
 allowed-tools: Read, Write, Edit, Bash
 ---
 
@@ -68,8 +68,12 @@ grep -m1 'directory:' .tilewright/datasets/<KEY>.yml   # the RAW string — what
 pwd -P                                                 # what readable_storage "." becomes
 ```
 
-**The raw `directory:` must equal `pwd -P` or sit literally beneath it.** If it
-does not, one of two things is true:
+**For `files` and `batch`, the raw `directory:` must equal `pwd -P` or sit
+literally beneath it.** Skip this check entirely for `table`: its `directory:`
+only locates the sidecar Parquet, it registers no assets, and it need not be
+under the root — or server-readable — at all.
+
+If it does not match, one of two things is true:
 
 - it points at an unrelated tree → `.tilewright/` is beside the wrong data;
   move it;
@@ -79,8 +83,7 @@ does not, one of two things is true:
   physical path and regenerate the manifest.
 
 Do not skip this: registration succeeds either way, and only the first read
-fails. (A `table` source registers no assets at all, so nothing can be
-refused — this check has no consequence there.)
+fails.
 
 The tilewright CLI is installed in the repo, not here. Reach it without leaving
 the data root — `--project` selects the environment and does **not** change the
