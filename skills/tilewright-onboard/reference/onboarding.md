@@ -413,10 +413,16 @@ already running, and proving an array reads back through HTTP, belong to the
 `.tilewright/datasets/<KEY>.yml` + `.tilewright/manifests/<KEY>/`.
 
 One thing you write here *does* have to anticipate the server: `directory:`.
-Registration emits that string verbatim into every asset URI, and the serving
-host does not have to call your files what you call them — a deployed pod may
-serve `/prjmaiqmag01/...` where the authoring host says `/sdf/...` for the same
-file. That skill's Gate 1 compares the two before anything is registered.
+Registration emits that string into every asset URI, and the serving host does
+not have to call your files what you call them — a deployed pod may serve
+`/prjmaiqmag01/...` where the authoring host says `/sdf/...` for the same file.
+That skill's Gate 1 compares the two before anything is registered.
+
+Write `directory:` as **your** view regardless, physically. It is what opens
+your files here, and it is the only view you can verify. When the server's view
+differs, the register skill's `server_base_dir` reconciles the two — a separate
+optional key beside `directory:`, precisely so one string never has to mean
+both.
 
 **4. Tests** (from the tilewright repo root — these check the shipped corpus and
 the source budgets, not your dataset):

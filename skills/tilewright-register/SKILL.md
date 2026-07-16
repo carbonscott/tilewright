@@ -1,6 +1,6 @@
 ---
 name: tilewright-register
-description: Register an already-manifested tilewright dataset into a Tiled catalog that is already running and prove it serves. You are handed the catalog's URL and API key; you do not start a server. First prove the endpoint resolves the same absolute paths your manifests carry, then register the Parquet manifests over HTTP, then read one array back through the endpoint to prove the bytes flow. Use when a dataset already has a validated dataset YAML and manifest (the tilewright-onboard skill's Gate B has passed) and it now needs to be in the catalog and queryable. Do NOT use to fix a dataset YAML's modelling (contract, params, entity/artifact counts) or to onboard a dataset whose structure is not yet described — that is tilewright-onboard. One exception — a source directory that is wrong as a path (logical or symlinked) is this skill's to fix and regenerate, because onboard's gates both pass on it.
+description: Register an already-manifested tilewright dataset into a Tiled catalog that is already running and prove it serves. You are handed the catalog's URL and API key; you do not start a server. First prove the endpoint resolves the same absolute paths your manifests carry, then register the Parquet manifests over HTTP, then read one array back through the endpoint to prove the bytes flow. Use when a dataset already has a validated dataset YAML and manifest (the tilewright-onboard skill's Gate B has passed) and it now needs to be in the catalog and queryable. Do NOT use to fix a dataset YAML's modelling (contract, params, entity/artifact counts) or to onboard a dataset whose structure is not yet described — that is tilewright-onboard. Two edits are this skill's to make — server_base_dir when the endpoint resolves your paths somewhere else, and a source directory that is wrong as a path (logical or symlinked), because onboard's gates both pass on it.
 allowed-tools: Read, Write, Edit, Bash
 ---
 
@@ -62,22 +62,33 @@ tells you nothing:
 uv run --project <tilewright repo root> python -c "
 from tiled.client import from_uri
 c = from_uri('<URL>', api_key='<API_KEY>')
-node, path = c, []
-for _ in range(6):
-    try:
-        k = next(iter(node))
-    except (StopIteration, TypeError):
-        break
-    node, _ = node[k], path.append(k)
-    ds = getattr(node, 'data_sources', None)
-    ds = ds() if callable(ds) else ds
-    if ds:
-        print('/'.join(path))
-        for a in ds[0].assets:
-            print(a.data_uri)
-        break
+def find(node, path=(), depth=0):
+    if depth > 3:
+        return None
+    for k in node:
+        child = node[k]
+        ds = getattr(child, 'data_sources', None)
+        ds = ds() if callable(ds) else ds
+        if ds:
+            return path + (k,), ds[0].assets
+        if hasattr(child, 'items'):          # containers only; never recurse into an array
+            hit = find(child, path + (k,), depth + 1)
+            if hit:
+                return hit
+    return None
+hit = find(c)
+if hit:
+    print('/'.join(hit[0]))
+    for a in hit[1]:
+        print(a.data_uri)
+else:
+    print('INCONCLUSIVE — no asset found; Gate 1 did not run')
 "
 ```
+
+It searches every branch, not just the first. A catalog whose first dataset is a
+`table` holds no assets there, and a probe that only tried the first key would
+report nothing while a sibling carried the answer.
 
 ```
 BROAD_SIGMA/BROAD_SIGMA_6dc97c22e692e/rixs_spectrum
@@ -97,9 +108,9 @@ differ, read the next section before you register — not after.
 
 Three things this gate cannot tell you, so do not over-read it:
 
-- **Printing nothing is not a pass.** An empty catalog, a catalog with no array
-  leaves, and a walk that ran out of depth all print nothing and all mean
-  *inconclusive* — never "no mismatch". If nothing prints, you have not run the
+- **Printing nothing is not a pass.** An empty catalog, a catalog holding only
+  zero-artifact (`table`) datasets, and a walk that ran out of depth all print
+  `INCONCLUSIVE` — never "no mismatch". If it prints that, you have not run the
   gate; Gate 3 becomes your only probe.
 - **One leaf is one dataset.** This prints the first asset it finds. A catalog
   can hold datasets registered from different hosts under different prefixes,
@@ -144,10 +155,24 @@ be both, which is why writing the server's path into `directory:` is not a
 workaround. It would break Gate B before you ever got here, because that path
 does not exist on your host.
 
-Derive the value from Gate 1's output, not from a guess: take the prefix the
-endpoint printed and give it the same tail your `directory:` has. Absent the
-key, the URI is byte-identical to before — so leave it out when the prefixes
-already agree, and `table` datasets never need it at all.
+Derive it, do not eyeball it. Gate 1 prints one full URI, and nothing in that
+string marks where the mount ends and the dataset's own tail begins — so
+subtract, do not guess:
+
+1. take the printed path, e.g. `/prjmaiqmag01/data-source/RIXS_SIM_BROAD_SIGMA/batch_0/simulations.h5`;
+2. strip that leaf's **manifest `file` value** off the end — not just the
+   filename. For `batch` the `file` is a relative path like
+   `batch_0/simulations.h5`, so stripping only `simulations.h5` leaves you one
+   level too deep and registers `failed=0` while serving nothing. What remains
+   is the server's view of *that dataset's* `directory:`;
+3. diff it against that dataset's own `directory:` to get the root mapping
+   (here `/sdf/data/lcls/ds/prj/prjmaiqmag01/results` → `/prjmaiqmag01`);
+4. apply that mapping to *your* `directory:`.
+
+If the leaf came from a different author's dataset you cannot do step 3 — ask
+the operator for the mapping rather than inventing one. Absent the key the URI
+is byte-identical to before, so leave it out when the prefixes already agree,
+and `table` datasets never need it at all.
 
 **An absolute-but-wrong value is validated and still fails.** The check rejects
 a relative path and `..`; it cannot know what the pod mounts. A typo here
@@ -278,8 +303,10 @@ unexplained 500.
    it physically, regenerate, delete the container, re-register.
 3. Still 500? **Ask the endpoint's operator** whether your root is under their
    `readable_storage` and whether their server loads the broker adapter. Give
-   them the exact `data_uri` from your manifest — the one fact they need and
-   cannot guess.
+   them the exact `data_uri` from your manifest **and the `x-tiled-request-id`
+   correlation ID off the 500** — the client echoes it in the exception, and it
+   sits beside the `Refusing to serve` line in their log. It is the one thing
+   that turns "it 500s" into a line number for someone who can read that log.
 
 **Do not edit that server's config, and do not ask for the allowlist to be
 widened to admit one dataset.** If a whole data root is not servable, that is a
@@ -308,10 +335,12 @@ shape+dtype of the array you read back through the endpoint. If Gate 1 failed,
 report *that*, and do not report a green Gate 2 as though it meant anything.
 
 Do not go hunting for *modelling* problems here — a contract or count problem
-belongs to **tilewright-onboard**; come back when Gate B is green again. The one
-edit that is yours to make is a `directory:` that is wrong *as a path* (a logical
-path through a symlink), per step 2 above. Onboard's gates cannot catch that one
-— they both pass on the logical path, because nothing opens the URI until a read.
+belongs to **tilewright-onboard**; come back when Gate B is green again. Two
+edits are yours: `server_base_dir`, when Gate 1 shows the endpoint sees your
+data somewhere else; and a `directory:` that is wrong *as a path* (a logical
+path through a symlink), per step 2 above. Onboard's gates cannot catch that
+second one — they both pass on the logical path, because nothing opens the URI
+until a read.
 
 ---
 
