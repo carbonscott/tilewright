@@ -59,7 +59,9 @@ or you destroy the very signal you are looking for:
 - The asset URI is built from the **raw, unresolved** `directory:` string
   (`file://localhost{directory}/{file}`).
 - `readable_storage: ["."]` becomes the **physical** cwd — `pwd -P`.
-- The allowlist test is a string prefix check that never resolves symlinks.
+- The allowlist test is a path-*component* containment test
+  (`os.path.commonpath`) that never resolves symlinks. It is not a string
+  prefix: an allowlisted `/data` does **not** admit `/data-backup`.
 
 ```bash
 grep -m1 'directory:' .tilewright/datasets/<KEY>.yml   # the RAW string — what the URI uses
@@ -72,8 +74,9 @@ does not, one of two things is true:
 - it points at an unrelated tree → `.tilewright/` is beside the wrong data;
   move it;
 - `readlink -f <directory>` *does* land under `pwd -P` → it is a logical path
-  through a symlink. It will be refused anyway, because the check is textual.
-  Rewrite `directory:` as the physical path and regenerate the manifest.
+  through a symlink. It will be refused anyway, because the test compares the
+  paths as written and never resolves them. Rewrite `directory:` as the
+  physical path and regenerate the manifest.
 
 Do not skip this: registration succeeds either way, and only the first read
 fails. (A `table` source registers no assets at all, so nothing can be
@@ -90,8 +93,13 @@ uv run --project <tilewright repo root> tilewright ...
 
 ## Step 1 — write `.tilewright/config.yml`
 
-Copy this and substitute `<PORT>` — one port per data root, since each root
-gets its own catalog and its own server. Everything else is verbatim:
+**Skip this step if `.tilewright/config.yml` already exists** — a second
+dataset in the same data root reuses the root's config untouched. That is the
+whole promise of the layout: no config edit, no restart. If the server is
+already running, skip to step 3 as well.
+
+Otherwise copy this and substitute `<PORT>` — one port per data root, since
+each root gets its own catalog and its own server. Everything else is verbatim:
 
 ```yaml
 uvicorn:
@@ -244,8 +252,8 @@ in the **server's** terminal/log, not in your client output. Read
 |---|---|---|
 | Gate 2 prints `FAILED artifact ...: 415: The given data source mimetype, application/x-hdf5-broker, is not one that the Tiled server knows how to read` | `adapters_by_mimetype` missing from `.tilewright/config.yml` — this fails at **registration**, not at read | Restore that block, restart the server, then **delete the dataset container (`c['<KEY>'].delete(recursive=True)`) and re-register** — the failed run left empty children that a plain re-run would count as `skipped`, hiding the breakage behind a green Gate 2 |
 | Gate 3 returns 500, and the server log says `Refusing to serve file://localhost/<path> because it is outside the readable storage area for this server` | The data is not under `readable_storage` — `.tilewright/` is not in the data root, or the server was started from another directory | Do not widen the allowlist to paper over it: move `.tilewright/` beside the data, or re-run the serve command from the data root so the allowlist means what it says. This error is the layout telling you it was bypassed |
-| Same `Refusing to serve` for data that IS under the root | Symlinked root: `readable_storage: ["."]` resolves to the **physical** cwd, `directory:` is a **logical** path, and the check is string-prefix only — it never resolves symlinks | Make `directory:` physical (`readlink -f`) in the dataset YAML and regenerate, or set `readable_storage` to the physical absolute path. Compare `readlink -f <directory>` against `pwd -P` |
-| Serve exits: `[Errno 98] error while attempting to bind on address ('127.0.0.1', 8017): address already in use` | Another data root's server already holds the port — this layout is one catalog per data root | Pick a free `uvicorn.port` in `.tilewright/config.yml` and pass the matching `--url http://localhost:<port>` to register. Do **not** merge two data roots into one catalog to dodge it |
+| Same `Refusing to serve` for data that IS under the root | Symlinked root: `readable_storage: ["."]` resolves to the **physical** cwd, `directory:` is a **logical** path, and the containment test never resolves symlinks | Rewrite `directory:` as the physical path in the dataset YAML and regenerate the manifest (or set `readable_storage` to the physical absolute path). Diagnose by comparing the **raw** `directory:` against `pwd -P` — do **not** `readlink -f` it first: the asset URI keeps the unresolved path, so resolving before comparing reports OK exactly when the dataset is broken |
+| Serve exits: `[Errno 98] error while attempting to bind on address ('127.0.0.1', 8017): address already in use` | Another data root's server already holds the port — this layout is one catalog per data root | Pick a free `uvicorn.port` in `.tilewright/config.yml` and pass the matching `--url http://localhost:<PORT>` to register. Do **not** merge two data roots into one catalog to dodge it |
 | `httpx.ConnectError` / connection refused during register | Server not running, or a different port | Step 2 first; confirm Gate 1 passes |
 | Register prints `failed=<N>` with a loud WARNING about child count | A crashed earlier run left a half-registered entity | Delete the dataset container (see Gate 2) and re-register; `skipped` is fine only after a clean run, `failed` never is |
 | `catalog.db` appears in the code repo, not beside the data | A command ran from the repo root instead of the data root | Delete the stray DB, `cd` to the data root, re-run. This is the binding rule biting |
