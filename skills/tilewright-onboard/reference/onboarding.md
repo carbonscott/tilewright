@@ -23,7 +23,7 @@ You are on a host that can see the data (e.g. sdfiana025). Always export
 the uv cache first, and run everything from the repo root:
 
 ```bash
-cd /sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/codes/tcb-min
+cd /sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/codes/tilewright
 export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE
 uv sync          # once, creates .venv with tiled 0.2.x + deps
 ```

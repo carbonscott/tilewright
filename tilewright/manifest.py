@@ -1,5 +1,5 @@
 """tilewright.manifest — v2 dataset YAML contract + Parquet manifest generation.
-source is a TAGGED UNION: files | batch | table (see the tcb-onboard skill). uid is a
+source is a TAGGED UNION: files | batch | table (see the tilewright-onboard skill). uid is a
 PROVENANCE hash: [:16] sha256 of rel_path | "rel_path:row" | str(row[id]).
 Validation collects ALL errors, prints domain language, exits 1. Shape/dtype
 are captured at generate time — registration never opens HDF5."""
@@ -299,7 +299,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(
         prog="tilewright manifest",
         description="Validate a dataset YAML and generate Parquet manifests.")
-    p.add_argument("yaml_path", help="dataset YAML (see the tcb-onboard skill)")
+    p.add_argument("yaml_path", help="dataset YAML (see the tilewright-onboard skill)")
     p.add_argument("-o", "--outdir", help="output dir for entities/artifacts.parquet")
     p.add_argument("--check", action="store_true",
                    help="validate the YAML contract only; do not touch data")
