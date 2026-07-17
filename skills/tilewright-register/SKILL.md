@@ -32,7 +32,9 @@ without leaving the data root — `--project` selects the environment and does
 **not** change the working directory:
 
 ```bash
-export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE   # S3DF only — omit elsewhere
+# S3DF only (home ~24 GB): put uv's cache on $SCRATCH — an unset $SCRATCH writes to an
+# unwritable /.uv-cache, so set it or point at any roomy dir. Omit this line off S3DF.
+export UV_CACHE_DIR="$SCRATCH/.uv-cache"
 uv run --project <tilewright repo root> tilewright ...
 ```
 
@@ -98,7 +100,7 @@ report nothing while a sibling carried the answer.
 
 ```
 BROAD_SIGMA/BROAD_SIGMA_6dc97c22e692e/rixs_spectrum
-file://localhost/prjmaiqmag01/data-source/RIXS_SIM_BROAD_SIGMA/batch_0/simulations.h5
+file://localhost/<project>/data-source/RIXS_SIM_BROAD_SIGMA/batch_0/simulations.h5
 ```
 
 Compare that prefix against the raw string your manifests will use — **do not
@@ -131,13 +133,13 @@ Three things this gate cannot tell you, so do not over-read it:
 Differing is normal, not broken. A deployed pod mounts the same bytes somewhere
 else, and nothing about your data is wrong.
 
-**Measured on the MAIQMag deployment (2026-07), for one and the same file:**
+**Measured on an S3DF deployment (2026-07), for one and the same file:**
 
 | | |
 |---|---|
-| what the endpoint serves | `file://localhost/prjmaiqmag01/LS/static/S_52.h5` |
-| what the authoring host calls it | `/sdf/data/lcls/ds/prj/prjmaiqmag01/results/LS/static/S_52.h5` |
-| does `/prjmaiqmag01` exist on the authoring host? | no |
+| what the endpoint serves | `file://localhost/<project>/LS/static/S_52.h5` |
+| what the authoring host calls it | `/sdf/data/lcls/ds/prj/<project>/results/LS/static/S_52.h5` |
+| does `/<project>` exist on the authoring host? | no |
 
 188 of 188 sampled assets on that endpoint carry the mapped prefix; none carry
 `/sdf`. The pod reads its own path fine — the two hosts simply disagree about
@@ -149,8 +151,8 @@ the same `files:` or `batch:` block:
 ```yaml
 source:
   files:
-    directory: /sdf/data/lcls/ds/prj/prjmaiqmag01/results/LS/static   # what YOU open
-    server_base_dir: /prjmaiqmag01/LS/static                          # what the SERVER opens
+    directory: /sdf/data/lcls/ds/prj/<project>/results/LS/static   # what YOU open
+    server_base_dir: /<project>/LS/static                          # what the SERVER opens
     pattern: "*.h5"
 ```
 
@@ -165,14 +167,14 @@ Derive it, do not eyeball it. Gate 1 prints one full URI, and nothing in that
 string marks where the mount ends and the dataset's own tail begins — so
 subtract, do not guess:
 
-1. take the printed path, e.g. `/prjmaiqmag01/data-source/RIXS_SIM_BROAD_SIGMA/batch_0/simulations.h5`;
+1. take the printed path, e.g. `/<project>/data-source/RIXS_SIM_BROAD_SIGMA/batch_0/simulations.h5`;
 2. strip that leaf's **manifest `file` value** off the end — not just the
    filename. For `batch` the `file` is a relative path like
    `batch_0/simulations.h5`, so stripping only `simulations.h5` leaves you one
    level too deep and registers `failed=0` while serving nothing. What remains
    is the server's view of *that dataset's* `directory:`;
 3. diff it against that dataset's own `directory:` to get the root mapping
-   (here `/sdf/data/lcls/ds/prj/prjmaiqmag01/results` → `/prjmaiqmag01`);
+   (here `/sdf/data/lcls/ds/prj/<project>/results` → `/<project>`);
 4. apply that mapping to *your* `directory:`.
 
 If the leaf came from a different author's dataset you cannot do step 3 — ask

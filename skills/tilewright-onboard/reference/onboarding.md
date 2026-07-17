@@ -177,7 +177,7 @@ source:
     path: CNCS_srtd.parquet      # Parquet filename relative to directory
     id: filename                 # required: column that identifies each entity
     locator:                     # optional: rendered per row
-      globus_path: "/maiqmag/.../{filename}"
+      globus_path: "/<collection>/.../{filename}"
 ```
 
 - `directory` here is where the **sidecar** lives — it need not be the data
@@ -270,7 +270,7 @@ metadata:
   facility: LCLS
 source:
   files:
-    directory: /sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/LS/static
+    directory: /sdf/data/lcls/ds/prj/<project>/results/data-source/LS/static
     pattern: "*.h5"
     params: {group: "/", from: attrs}
 artifacts:
@@ -303,7 +303,7 @@ metadata:
   shared_omega_bounds: /omega_bounds   # the author writes, nothing more
 source:
   batch:
-    directory: /sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/RIXS_SIM_BROAD_SIGMA
+    directory: /sdf/data/lcls/ds/prj/<project>/results/data-source/RIXS_SIM_BROAD_SIGMA
     pattern: "*/simulations.h5"
     params: {group: /params}
     extra: [/log_probs]
@@ -336,14 +336,14 @@ metadata:
   pi: "G. E. Granroth"
 source:
   table:
-    directory: /sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/19g/mcstas_incident_beam/cncs_new
+    directory: /sdf/data/lcls/ds/prj/<project>/results/data-source/19g/mcstas_incident_beam/cncs_new
     path: CNCS_srtd.parquet
     id: filename
     locator:
       mcpl_filename: "{filename}"
-      globus_endpoint: "ee51784b-3173-4ff2-bab5-38c4bd867d02"
-      globus_path: "/maiqmag/19g/mcstas_incident_beam/cncs_new/{filename}"
-      globus_url: "https://app.globus.org/file-manager?origin_id=ee51784b-3173-4ff2-bab5-38c4bd867d02&origin_path=/maiqmag/19g/mcstas_incident_beam/cncs_new/{filename}"
+      globus_endpoint: "<globus_collection_id>"
+      globus_path: "/<collection>/19g/mcstas_incident_beam/cncs_new/{filename}"
+      globus_url: "https://app.globus.org/file-manager?origin_id=<globus_collection_id>&origin_path=/<collection>/19g/mcstas_incident_beam/cncs_new/{filename}"
 ```
 
 Expected: `entities=100 artifacts=0`. Each entity's metadata carries its
@@ -351,7 +351,7 @@ physics params plus `globus_url` etc.; there are no array children.
 
 ## Worked example 4 — groups (NiPS3 9-DOF sweep, 20,000 entities in one file)
 
-Directory `/sdf/.../data-source/Zhantao` holds a single 19GB
+Directory `/sdf/.../data-source/<author>` holds a single 19GB
 `nips3_fwhm4_9dof_20000_20260303_0537.h5`. Inside it: 20,000 sibling
 top-level groups `/sample_1` ... `/sample_20000`, each holding
 `params/<9 names>` as `shape=()` **datasets** (the groups' attrs are empty)
@@ -367,7 +367,7 @@ metadata:
   method: RIXS
 source:
   groups:
-    directory: /sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/Zhantao
+    directory: /sdf/data/lcls/ds/prj/<project>/results/data-source/<author>
     file: nips3_fwhm4_9dof_20000_20260303_0537.h5
     pattern: "sample_*"
     params: {group: params, from: datasets}   # read at /sample_N/params

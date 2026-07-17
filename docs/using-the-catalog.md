@@ -55,7 +55,7 @@ from tilewright import client as tw
 c = from_uri("<URL>", api_key="<API_KEY>")   # the endpoint you registered into
 ent = c["BROAD_SIGMA"].search(Key("sigma") >= 0.04).values().first()
 tw.locate(ent)      # {"rixs_spectrum": {"file": ..., "dataset": ..., "index": ...}}
-base = "/sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/RIXS_SIM_BROAD_SIGMA"
+base = "/sdf/data/lcls/ds/prj/<project>/results/data-source/RIXS_SIM_BROAD_SIGMA"
 spec = tw.load(ent, "rixs_spectrum", base)          # (151, 40), pure h5py
 row0 = tw.load(ent, "rixs_spectrum", base, slc=(0, slice(None)))
 
