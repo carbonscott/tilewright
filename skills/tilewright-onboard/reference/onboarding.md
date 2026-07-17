@@ -77,8 +77,8 @@ h5py from any source file. There is no special mechanism for them.
 
 ### `source` (mapping, required) — the tagged union
 
-Exactly one of `files`, `batch`, `table`. Each tag owns only its own keys;
-an illegal combination is unrepresentable, not merely rejected.
+Exactly one of `files`, `batch`, `table`, `groups`. Each tag owns only its own
+keys; an illegal combination is unrepresentable, not merely rejected.
 
 **`source.files`** — per-entity: one matched file = one entity.
 
@@ -141,6 +141,40 @@ If `/spectra` is `(2000, 151, 40)`, that file holds 2000 entities and
 entity *i*'s artifact is `spectra[i]` with shape `(151, 40)`. Row indices
 reset per file; the manifest's `file` column disambiguates.
 
+**`source.groups`** — entities are sibling top-level groups inside ONE file.
+
+```yaml
+source:
+  groups:
+    directory: /abs/path
+    file: nips3_20000.h5         # ONE file, relative to directory
+    pattern: "sample_*"          # globs top-level group NAMES, not HDF5 paths
+    params: {group: params, from: datasets}
+```
+
+Use it when a producer wrote N self-contained entities into one HDF5 —
+`/sample_1`, `/sample_2`, ... — each with its own params and its own
+**unstacked** arrays. `files` would collapse that to a single entity, and
+`batch` cannot read it: nothing is stacked on a leading axis.
+
+- `directory` — as for `files` (absolute, physical).
+- `file` (string, required) — the one file, **relative to `directory`** and
+  free of `..`. It is joined onto the server's view of the root to build the
+  asset URI, so an absolute path would silently discard `server_base_dir` and
+  strand the URI on the generating host's path — rejected at Gate A.
+- `pattern` (string, required) — an fnmatch glob over **top-level group
+  names** (`sample_*`), not paths (`/sample_*`). Only groups become entities:
+  a top-level *dataset* whose name matches is skipped, never an entity.
+  Matching nothing is a hard error, not an empty dataset.
+- `params` (mapping or `null`, required) — the same `{group, from}` mapping as
+  `files`, one level down: `group` is resolved **inside each entity's group**,
+  so `group: params` reads `/sample_N/params`. `from: datasets` is the common
+  case (0-d datasets); `from: attrs` reads that subgroup's attributes.
+
+Artifacts are declared **relative to the entity group** (`data`, not
+`/sample_1/data`) and emitted absolute per entity, so each entity serves its
+own `/sample_N/data`. A leading `/` is rejected at Gate A.
+
 **`source.table`** — passthrough: the sidecar Parquet's rows ARE the
 entities. Use it when Tiled cannot read the bytes at all (non-HDF5 format,
 or the data lives at a remote facility) but a table of per-file parameters
@@ -178,6 +212,9 @@ is the HDF5 path inside each file. Rules:
 - `files` / `batch`: required, minimum 1 entry. Every listed dataset must
   exist in every matched file (missing → hard error). For `batch`, every
   artifact dataset's leading axis must equal N.
+- `groups`: required, minimum 1 entry, but `dataset` is written **relative to
+  the entity group** (`data`, not `/sample_1/data` — a leading `/` is
+  rejected). It must exist in every matched group.
 - `table`: must be **absent or `[]`** — table entities have no readable
   bytes.
 
@@ -190,6 +227,7 @@ its parameters:
 |---|---|
 | files | `sha256(relative_file_path)[:16]` |
 | batch | `sha256("relative_file_path:row_index")[:16]` |
+| groups | `sha256("relative_file_path:/group_name")[:16]` |
 | table | `sha256(str(row[id]))[:16]` |
 
 Consequence: two files with identical params are **two entities**. That is
@@ -377,6 +415,43 @@ source:
 Expected: `entities=100 artifacts=0`. Each entity's metadata carries its
 physics params plus `globus_url` etc.; there are no array children.
 
+## Worked example 4 — groups (NiPS3 9-DOF sweep, 20,000 entities in one file)
+
+Directory `/sdf/.../data-source/Zhantao` holds a single 19GB
+`nips3_fwhm4_9dof_20000_20260303_0537.h5`. Inside it: 20,000 sibling
+top-level groups `/sample_1` ... `/sample_20000`, each holding
+`params/<9 names>` as `shape=()` **datasets** (the groups' attrs are empty)
+plus its own unstacked arrays — `data`, `energies`, `powder_data`, ...
+Nothing is stacked on a leading axis, so `batch` cannot read it; keying on
+the file would make all 20,000 one entity.
+
+```yaml
+key: NIPS3_9DOF
+metadata:
+  data_type: simulation
+  material: NiPS3
+  method: RIXS
+source:
+  groups:
+    directory: /sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/Zhantao
+    file: nips3_fwhm4_9dof_20000_20260303_0537.h5
+    pattern: "sample_*"
+    params: {group: params, from: datasets}   # read at /sample_N/params
+artifacts:
+  - {type: spectrum, dataset: data}           # relative: serves /sample_N/data
+  - {type: energies, dataset: energies}
+  - {type: powder_spectrum, dataset: powder_data}
+  - {type: powder_energies, dataset: powder_energies}
+  - {type: powder_qs_lab, dataset: powder_qs_lab}
+  - {type: qs_lab, dataset: qs_lab}
+  - {type: qs_rlu, dataset: qs_rlu}
+```
+
+Expected: `entities=20000 artifacts=140000` (entities × 7 artifacts). The file
+is opened once for the whole walk. Add `server_base_dir` if the server mounts
+these bytes at a different absolute path than this host does — `groups`
+accepts it, which is why `table` was never a real option for this dataset.
+
 ## Commands
 
 All from the **data root** (the directory holding `.tilewright/`) unless a step
@@ -391,7 +466,7 @@ Name the YAML file and the manifest directory after it, exactly.
 **1. Validate the contract only (touches no data):**
 ```bash
 uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/<KEY>.yml --check
-# -> contract OK: key=... source=files|batch|table artifacts=N
+# -> contract OK: key=... source=files|batch|table|groups artifacts=N
 # invalid -> every error printed ("source.table requires 'id' ..."), exit 1
 ```
 

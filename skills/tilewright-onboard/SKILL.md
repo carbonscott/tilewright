@@ -1,6 +1,6 @@
 ---
 name: tilewright-onboard
-description: Onboard a new, structure-unknown scientific dataset into a tilewright Tiled catalog — inspect the data, choose the source archetype (files | batch | table), author and validate the dataset YAML, then generate its Parquet manifest with entity/artifact counts you predicted, and STOP before registration. Use when a dataset directory needs a tilewright manifest and its layout is not yet described (per-file HDF5, batched HDF5, or pointer-only non-HDF5/remote data). Do NOT use for querying, reading, serving, or registering datasets already in the catalog, or for a dataset whose manifest already cleared Gate B. DO use it to re-model a dataset whose manifest is wrong — bad params, wrong counts, wrong source archetype — even though the files exist; a failed Gate B still leaves manifests on disk, and re-modelling is this skill's job, not tilewright-register's.
+description: Onboard a new, structure-unknown scientific dataset into a tilewright Tiled catalog — inspect the data, choose the source archetype (files | batch | table | groups), author and validate the dataset YAML, then generate its Parquet manifest with entity/artifact counts you predicted, and STOP before registration. Use when a dataset directory needs a tilewright manifest and its layout is not yet described (per-file HDF5, batched HDF5, many self-contained groups inside one HDF5, or pointer-only non-HDF5/remote data). Do NOT use for querying, reading, serving, or registering datasets already in the catalog, or for a dataset whose manifest already cleared Gate B. DO use it to re-model a dataset whose manifest is wrong — bad params, wrong counts, wrong source archetype — even though the files exist; a failed Gate B still leaves manifests on disk, and re-modelling is this skill's job, not tilewright-register's.
 allowed-tools: Read, Write, Edit, Bash
 ---
 
@@ -12,7 +12,7 @@ first. You have freedom in *how* you model the data; you have a fixed, tested
 *done* — two machine-checkable gates. **Stop after Gate B: do not register,
 serve, or query.**
 
-The full contract (every field), the three worked examples, the limits &
+The full contract (every field), the four worked examples, the limits &
 reserved-names list, and the error-triage table live in
 **`${CLAUDE_SKILL_DIR}/reference/onboarding.md`** — read it before you write any
 YAML (step 3), and again to decode any generator error. This skill is the
@@ -98,7 +98,8 @@ EOF
 
 Read your dump against this table. Exactly one source tag per dataset (a tagged
 union): `files` (one matched file = one entity), `batch` (entities stacked on
-axis 0 inside each file), `table` (a sidecar Parquet's rows *are* the entities;
+axis 0 inside each file), `groups` (one matched top-level group inside a single
+file = one entity), `table` (a sidecar Parquet's rows *are* the entities;
 pointer-only, no served bytes).
 
 | Observation in the dump | source tag | params | artifact membership |
@@ -106,21 +107,31 @@ pointer-only, no served bytes).
 | Scalar params are **attributes** on one group (often the root) | `files` | `{group: <that group>, from: attrs}` | every non-param dataset is an artifact |
 | Scalar params are **0-d datasets** (`shape=()`) under one group | `files` | `{group: <that group>, from: datasets}` | every non-param dataset is an artifact |
 | One group holds `(N,)` datasets and the big arrays are `(N, ...)` with the same leading N | `batch` | `{group: <that group>}` | only `(N, ...)` leading-axis datasets can be artifacts; everything else clients need becomes a metadata path entry |
+| **One** file holds many sibling top-level groups (`/sample_1`, `/sample_2`, ...), each self-contained: its own params subgroup and its own **unstacked** arrays | `groups` | `{group: <subgroup, relative>, from: attrs\|datasets}` | every non-param dataset **inside a group** is an artifact, named relative to it |
 | Readable HDF5, arrays present, but **no scalar params anywhere** (no attrs, no 0-d datasets) | `files` | `null` — explicit opt-in: entities keyed by file path alone, metadata is just `uid` | every dataset is an artifact |
 | h5py cannot open the files at all (not HDF5, or data lives at a remote facility), but a per-entity Parquet table exists or can be built | `table` | — (`id` = a unique column) | none: `artifacts` absent or `[]` |
 | **Openable** HDF5 but no scalar params at a single group (params scattered in nested subgroups) | prefer `files` + `params: null` if the arrays should be served; `table` if you have (or build) a per-entity sidecar and accept pointer-only | per that choice | per that choice |
 
+**`batch` vs `groups`** — both put many entities in one file; the dump tells them
+apart. Stacked on a leading axis (`/spectra` is `(2000, 151)`) → `batch`. Sibling
+groups each holding their own unstacked arrays (`/sample_1/data` is `(151,)`, and
+there are 2000 such groups) → `groups`. Do **not** reach for `table` here: it
+serves no bytes and forbids `server_base_dir`, so it cannot onboard this layout —
+it is a pointer-only fallback, not a way to model an openable file.
+
 **Membership rule (binding):** `files` → every non-param dataset is an
 artifact. `batch` → only `(N, ...)` leading-axis datasets can be artifacts;
 everything else a client needs (e.g. a `(151,)` energy axis) becomes a metadata
-path entry you write yourself (`shared_eloss: /eloss`).
+path entry you write yourself (`shared_eloss: /eloss`). `groups` → as `files`,
+but scoped to one entity group: an artifact `dataset` is written **relative** to
+the group (`data`, never `/sample_1/data`).
 
 ## Step 3 — author `.tilewright/datasets/<KEY>.yml`
 
 Exactly four top-level keys, no others: `key`, `metadata` (`data_type`
-required), `source` (exactly one of `files | batch | table`), `artifacts`
-(min 1 for files/batch; **absent or `[]` for table**). The field-by-field spec,
-the three worked examples, and the limits/reserved-names section are in the
+required), `source` (exactly one of `files | batch | table | groups`), `artifacts`
+(min 1 for files/batch/groups; **absent or `[]` for table**). The field-by-field spec,
+the four worked examples, and the limits/reserved-names section are in the
 reference doc — copy the closest worked example and adapt it. Unknown keys and
 wrong types fail loudly at Gate A.
 
@@ -142,6 +153,7 @@ them all (decode with the reference's error-triage table) and re-run until clean
 |---|---|---|
 | files | matched files (`ls <directory>/<pattern> \| wc -l`) | entities × len(artifacts) |
 | batch | Σ N over matched files (N = leading axis of artifact[0]) | entities × len(artifacts) |
+| groups | top-level **groups** in `file` whose name matches `pattern` | entities × len(artifacts) |
 | table | sidecar rows | 0 |
 
 Then generate:
@@ -167,7 +179,9 @@ Tiled cannot read the bytes at all (non-HDF5, or remote-facility data), OR you
 deliberately accept pointer-only to keep scattered/nested params as queryable
 metadata. If you fell back to `table` merely because the scalar params were not
 at a single group, prefer **`files` + `params: null`** — that still serves the
-arrays (entities keyed by file path, metadata is just `uid`). Switch, or record
+arrays (entities keyed by file path, metadata is just `uid`). If you fell back to
+it because one openable file held many entities as sibling groups, that is
+**`groups`** — it serves them and `table` cannot. Switch, or record
 in the YAML `metadata` why pointer-only is the right choice for this dataset.
 (This is the one onboarding judgment the hard gates cannot catch: a real blind
 trial passed both as pointer-only yet silently lost servable arrays.)

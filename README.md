@@ -60,7 +60,7 @@ uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets
 The result is a validated `.tilewright/datasets/<KEY>.yml` and
 `.tilewright/manifests/<KEY>/{entities,artifacts}.parquet`.
 
-The YAML contract is a tagged union — `source: files | batch | table` — plus a
+The YAML contract is a tagged union — `source: files | batch | table | groups` — plus a
 `key`, provenance `metadata`, and an `artifacts` list. See `examples/datasets/` for
 worked examples and `skills/tilewright-onboard/reference/onboarding.md` for the full
 field reference. Copy their *structure*, not their filenames: those predate the

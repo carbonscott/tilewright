@@ -1,0 +1,25 @@
+# NiPS3 9-DOF sweep — groups source: 20,000 entities inside ONE 19GB file.
+# The producer wrote each entity as a self-contained /sample_N group rather
+# than as its own file: 9 scalar params under /sample_N/params (shape=()
+# datasets, not attrs — 'from: datasets' is load-bearing here) and its own
+# unstacked arrays. Artifacts are declared RELATIVE to a group ('data'), so
+# each entity serves its own /sample_N/data. See issue #5.
+key: NIPS3_9DOF
+metadata:
+  data_type: simulation
+  material: NiPS3
+  method: RIXS
+source:
+  groups:
+    directory: /sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/Zhantao
+    file: nips3_fwhm4_9dof_20000_20260303_0537.h5
+    pattern: "sample_*"
+    params: {group: params, from: datasets}
+artifacts:
+  - {type: spectrum, dataset: data}
+  - {type: energies, dataset: energies}
+  - {type: powder_spectrum, dataset: powder_data}
+  - {type: powder_energies, dataset: powder_energies}
+  - {type: powder_qs_lab, dataset: powder_qs_lab}
+  - {type: qs_lab, dataset: qs_lab}
+  - {type: qs_rlu, dataset: qs_rlu}
