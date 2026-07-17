@@ -1,6 +1,6 @@
 # FINDINGS — tcb-min ground-up rebuild
 
-Final evidence document. Repo: `/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/codes/tcb-min`
+Final evidence document. Repo: `/sdf/data/lcls/ds/prj/<project>/results/<user>/codes/tcb-min`
 (sdfiana025, branch master). Server: `tiled serve config config.yml --api-key tcbmin` on
 http://127.0.0.1:8017, sqlite `catalog.db`, tiled 0.2.14 (dep pinned `>=0.2.9,<0.3`, resolved and
 compatibility-verified in uv.lock). Every number below traces to a committed test, a registration
