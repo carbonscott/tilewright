@@ -1,63 +1,46 @@
-# tilewright — Dataset Onboarding Guide (contract v2)
+# tilewright — dataset YAML field reference (contract v2)
 
 ## What this is
 
 tilewright is a minimal broker that registers multi-modal scientific HDF5
 datasets into a [Tiled](https://blueskyproject.io/tiled/) catalog without
 copying any data: files are referenced in place, and physics parameters
-become server-side queryable metadata. You describe a dataset once in a
-small YAML file, generate two Parquet manifests from it, and register those
-manifests into a running Tiled server over HTTP. The hierarchy is
-**Dataset** (container with provenance metadata) → **Entity** (container
-whose metadata is the physics parameters) → **Artifact** (array child
-served lazily from the source HDF5 file).
+become server-side queryable metadata. The hierarchy is **Dataset**
+(container with provenance metadata) → **Entity** (container whose metadata
+is the physics parameters) → **Artifact** (array child served lazily from
+the source HDF5 file).
 
 Everything is explicit. The YAML is the contract; nothing about your data
 is guessed. If the YAML doesn't say it, it doesn't happen. Invalid YAML
 prints **every** error in plain language and exits 1 — no type coercion,
 exact types or fail loud.
 
-## Prerequisites
+This file is the **field reference**: what every key means, what the contract
+cannot say, four worked examples, and how to decode an error. The **procedure** —
+what to inspect, which source tag to choose, what counts to predict, and the two
+gates that define done — is `SKILL.md`, and it is deliberately not repeated here.
+Where this file needs a decision, it points at `SKILL.md` by name.
 
-You are on a host that can see the data (e.g. sdfiana025). Build the
-environment once from the repo root:
+That split is load-bearing, not stylistic: this file and `SKILL.md` once both
+carried the procedure, the copies drifted, and the reference silently went stale
+on a whole source tag. If you are about to add a decision table, a gate, or an
+inspection step here — it belongs in `SKILL.md` instead.
 
-```bash
-cd <tilewright repo root>        # e.g. /sdf/.../cwang31/codes/tilewright
-export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE   # S3DF only — omit elsewhere
-uv sync          # once, creates .venv with tiled 0.2.x + deps
-```
+## Contents
 
-Then **work from the data root** — the directory holding the dataset you are
-onboarding — and reach the CLI there with `uv run --project <tilewright repo
-root> ...`, which selects the environment without changing the working
-directory. Your outputs go in a `.tilewright/` directory inside that data
-root:
-
-```bash
-cd <data root>
-mkdir -p .tilewright/datasets .tilewright/manifests
-```
-
-Every relative path in this guide is anchored to the data root unless it says
-otherwise.
+| Section | Read it when |
+|---|---|
+| The dataset YAML contract — field by field | authoring the YAML: every key, every tag, what each accepts |
+| Entity identity (uid) | asking why two identical-looking files are two entities |
+| Limits and reserved names | the contract will not say what you want it to say |
+| Worked examples 1–4 (files / batch / table / groups) | starting — copy the closest one and adapt it |
+| What the generated manifest contains | the generator ran; what did it write |
+| Error triage — symptom, cause, fix | a `tilewright manifest` command failed |
 
 ## The dataset YAML contract — field by field
 
 Exactly four top-level keys are allowed: `key`, `metadata`, `source`,
 `artifacts`. Unknown keys are rejected (typos fail loudly).
-
-```yaml
-key: MY_DATASET            # required: Tiled key of the dataset container
-metadata:                  # required: free-form dict; data_type required
-  data_type: experimental
-source:                    # required: TAGGED UNION — exactly ONE of the three
-  files:  {...}            #   one matched file = one entity
-  batch:  {...}            #   entities stacked along axis 0 inside each file
-  table:  {...}            #   sidecar Parquet rows ARE the entities
-artifacts:                 # required (min 1) for files/batch;
-  - {type: spectrum, dataset: /spectra}   # absent or [] for table
-```
 
 ### `key` (string, required)
 
@@ -116,6 +99,13 @@ source:
     - `datasets` — parameters are **0-dimensional datasets** directly
       under that group (`f[group]["Ja_meV"][()]`). Non-scalar datasets
       under the group (e.g. your artifact arrays at `/`) are not params.
+- `server_base_dir` (string, optional) — the serving host's own view of
+  `directory`, substituted for it **only** when building the asset URI; every
+  local read keeps using `directory`. Legal on `files`, `batch` and `groups`,
+  never on `table`. Leave it out while onboarding: you cannot know the server's
+  view from here, and omitting it emits a byte-identical URI. It is the
+  **tilewright-register** skill's to add, once that skill has measured what the
+  endpoint actually resolves.
 
 **`source.batch`** — entities are rows along axis 0 inside each matched file.
 
@@ -161,7 +151,7 @@ Use it when a producer wrote N self-contained entities into one HDF5 —
 - `file` (string, required) — the one file, **relative to `directory`** and
   free of `..`. It is joined onto the server's view of the root to build the
   asset URI, so an absolute path would silently discard `server_base_dir` and
-  strand the URI on the generating host's path — rejected at Gate A.
+  strand the URI on the generating host's path — rejected by validation.
 - `pattern` (string, required) — an fnmatch glob over **top-level group
   names** (`sample_*`), not paths (`/sample_*`). Only groups become entities:
   a top-level *dataset* whose name matches is skipped, never an entity.
@@ -173,7 +163,7 @@ Use it when a producer wrote N self-contained entities into one HDF5 —
 
 Artifacts are declared **relative to the entity group** (`data`, not
 `/sample_1/data`) and emitted absolute per entity, so each entity serves its
-own `/sample_N/data`. A leading `/` is rejected at Gate A.
+own `/sample_N/data`. A leading `/` is rejected by validation.
 
 **`source.table`** — passthrough: the sidecar Parquet's rows ARE the
 entities. Use it when Tiled cannot read the bytes at all (non-HDF5 format,
@@ -235,75 +225,13 @@ correct — identity is where the data came from; params are pure queryable
 metadata and may collide freely. Regenerating a manifest is stable as long
 as file names (or table ids) don't change.
 
-## First run — inspect the data before writing any YAML
-
-Do not reason about what the data "should" be; run this protocol and decide
-from what you observe.
-
-**Step 1 — list the directory.** Note every non-HDF5 sibling; your `pattern`
-must exclude them all.
-
-```bash
-ls -la /abs/path/to/dataset_dir      # .nc twins? .parquet sidecars? .gz? subdirs?
-```
-
-**Step 2 — dump one candidate file completely** (every dataset's shape/dtype
-and every attribute at every level, groups included):
-
-```bash
-uv run --project <tilewright repo root> python - <<'EOF'
-import h5py
-fp = "/abs/path/to/one_matched_file.h5"
-with h5py.File(fp, "r") as f:
-    for k, v in f.attrs.items():                     # root attrs (visititems skips "/")
-        print(f"attr /@{k} = {v!r}")
-    def dump(name, obj):
-        if isinstance(obj, h5py.Dataset):
-            print(f"D /{name}  shape={obj.shape} dtype={obj.dtype}")
-        else:
-            print(f"G /{name}/")
-        for k, v in obj.attrs.items():
-            print(f"attr /{name}@{k} = {v!r}")
-    f.visititems(dump)
-EOF
-```
-
-**Step 3 — read your observations off this table:**
-
-| Observation in the dump | source tag | params | artifact membership |
-|---|---|---|---|
-| Scalar params are **attributes** on one group (often the root) | `files` | `{group: <that group>, from: attrs}` | every non-param dataset is an artifact |
-| Scalar params are **0-d datasets** (`shape=()`) under one group | `files` | `{group: <that group>, from: datasets}` | every non-param dataset is an artifact |
-| One group holds `(N,)` datasets and the big arrays are `(N, ...)` with the same leading N | `batch` | `{group: <that group>}` | only `(N, ...)` leading-axis datasets can be artifacts; everything else clients need (e.g. a `(151,)` axis) becomes a metadata path entry |
-| Readable HDF5, arrays present, but **no scalar params anywhere** (no attrs, no 0-d datasets) | `files` | `null` — explicit opt-in: entities keyed by file path alone, metadata is just `uid` | every dataset is an artifact |
-| h5py cannot open the files at all (not HDF5, or data lives at a remote facility), but a per-entity Parquet table exists or can be built | `table` | — (`id` = a unique column) | none: `artifacts` absent or `[]` |
-| **Openable** HDF5 but no extractable scalar params at a single group (params scattered in nested subgroups) | prefer `files` + `params: null` if the arrays should be served; `table` if you have (or build) a per-entity sidecar and accept pointer-only | per that choice | per that choice |
-
-The membership rule, stated once and binding: **files -> every non-param
-dataset is an artifact; batch -> only (N, ...) leading-axis datasets can be
-artifacts, everything else clients need becomes a metadata path entry.**
-(That is why worked example 1 lists axis-like datasets such as `energy` and
-`pixel` as artifacts, while worked example 2 puts `/eloss` in metadata: in
-batch, a `(151,)` axis has no leading N and cannot be an artifact.)
-
-**Step 4 — predict, then compare.** Count the matched files
-(`ls <directory>/<pattern> | wc -l`) and predict the generator's output
-before running it:
-
-- `files`: entities = matched files; artifacts = entities × len(artifacts)
-- `batch`: entities = sum of N over matched files; artifacts = entities × len(artifacts)
-- `table`: entities = sidecar rows; artifacts = 0
-
-The tool's summary line (`dataset=... entities=... artifacts=...`) must
-equal your prediction exactly. If it does not, **stop** — do not register;
-find the discrepancy (unmatched files, wrong N, unexpected rows) first.
-
 ## Limits and reserved names — what the contract cannot say
 
 - **One params group only.** Params scattered across nested subgroups (e.g.
   `/instrument/Ei` carrying a `value` attr per subgroup) are unrepresentable
-  as params. Route per the step-3 table: `files` + `params: null` if the
-  arrays should be served, `table` + sidecar if you accept pointer-only.
+  as params. Route per the source-tag decision table in `SKILL.md`: `files` +
+  `params: null` if the arrays should be served, `table` + sidecar if you accept
+  pointer-only.
 - **No exclude mechanism.** Every attr (or 0-d dataset) under the params
   group is ingested, including housekeeping (`NX_class`, version strings).
   If that pollutes the metadata, there is no filter — accept it or report.
@@ -386,6 +314,12 @@ artifacts:
 Expected: `entities=10000 artifacts=10000` (each artifact served as
 `(151, 40)` float64).
 
+`/eloss` is metadata here, not an artifact, because a `(151,)` axis has no
+leading N — in `batch`, only `(N, ...)` datasets can be artifacts. Contrast
+worked example 1, where the same axis-like datasets (`energy`, `pixel`) *are*
+artifacts: `files` has no leading-axis constraint. The two examples are not
+inconsistent; the source tag is what differs.
+
 ## Worked example 3 — table (CNCS incident-beam, Globus-hosted)
 
 Directory `/sdf/.../data-source/19g/mcstas_incident_beam/cncs_new` holds
@@ -452,59 +386,12 @@ is opened once for the whole walk. Add `server_base_dir` if the server mounts
 these bytes at a different absolute path than this host does — `groups`
 accepts it, which is why `table` was never a real option for this dataset.
 
-## Commands
+## What the generated manifest contains
 
-All from the **data root** (the directory holding `.tilewright/`) unless a step
-says otherwise (on S3DF, with `UV_CACHE_DIR` exported — see Prerequisites). `--project`
-points uv at the tilewright checkout for the environment; it does not change
-the working directory, so the relative paths below stay anchored to the data
-root.
-
-`<KEY>` below is the `key:` value inside the dataset YAML (e.g. `BROAD_SIGMA`).
-Name the YAML file and the manifest directory after it, exactly.
-
-**1. Validate the contract only (touches no data):**
-```bash
-uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/<KEY>.yml --check
-# -> contract OK: key=... source=files|batch|table|groups artifacts=N
-# invalid -> every error printed ("source.table requires 'id' ..."), exit 1
-```
-
-**2. Generate manifests:**
-```bash
-uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets/<KEY>.yml -o .tilewright/manifests/<KEY>
-# -> dataset=<KEY> entities=N artifacts=M -> .tilewright/manifests/<KEY>/...
-```
-This writes `entities.parquet` (uid + one column per parameter [+ extra,
+Generation writes `entities.parquet` (uid + one column per parameter [+ extra,
 locator columns]) and `artifacts.parquet`
 (`uid,type,file,dataset,index,shape,dtype`; empty-but-typed for table
 sources). Shape and dtype are captured now; registration never opens HDF5.
-
-**3. Registering — not this skill.**
-
-Onboarding stops at Gate B. Registering the manifests into a catalog that is
-already running, and proving an array reads back through HTTP, belong to the
-**tilewright-register** skill, which begins exactly where you stop:
-`.tilewright/datasets/<KEY>.yml` + `.tilewright/manifests/<KEY>/`.
-
-One thing you write here *does* have to anticipate the server: `directory:`.
-Registration emits that string into every asset URI, and the serving host does
-not have to call your files what you call them — a deployed pod may serve
-`/prjmaiqmag01/...` where the authoring host says `/sdf/...` for the same file.
-That skill's Gate 1 compares the two before anything is registered.
-
-Write `directory:` as **your** view regardless, physically. It is what opens
-your files here, and it is the only view you can verify. When the server's view
-differs, the register skill's `server_base_dir` reconciles the two — a separate
-optional key beside `directory:`, precisely so one string never has to mean
-both.
-
-**4. Tests** (from the tilewright repo root — these check the shipped corpus and
-the source budgets, not your dataset):
-```bash
-uv run --with pytest pytest tests/ -v     # offline: corpus counts + budgets
-uv run python tests/verify_live.py        # manual: needs the server running
-```
 
 ## Error triage — symptom, cause, fix
 
@@ -513,88 +400,13 @@ involved. Decode the common ones here before changing anything else:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `OSError: ... file signature not found` / `<file>: cannot open as HDF5` | `pattern` matched a non-HDF5 sibling (a `.nc` twin, a Parquet sidecar) | Tighten `pattern` (e.g. `"*.h5"`); re-check step 1 of the inspection protocol |
-| Bare `KeyError: "... object 'X' doesn't exist"` with **no filename** | An HDF5 path is wrong in your own snippet (generation always prefixes the filename: `<file>: <yaml key> '/X' not found in file` means that path is absent in that matched file) | Run the step-2 dump on the named file; fix the group/dataset path in the YAML |
-| `<file>: no params at group='...' from=...` | **files only.** Wrong `group`, wrong `from` (attrs vs datasets), or the "scalars" are `(1,)`-shaped, which `from: datasets` skips | Check the dump: attrs on the group → `from: attrs`; `shape=()` datasets → `from: datasets`; `(1,)` shapes → unsupported, stop and report; genuinely no params anywhere in the file → `params: null` (explicit opt-in, step-3 table) |
-| `<file>: no (N,) datasets under <group>` | **batch only.** The `params.group` holds no 1-D datasets, so there is nothing to key entities by — often the group is wrong, or the params are scalars, which means the dataset is `files`, not `batch` | Re-read the dump: `batch` requires `(N,)` datasets under `group` whose N matches the artifacts' leading axis. Scalar params instead → it is a `files` dataset; go back to the step-2 table |
+| `OSError: ... file signature not found` / `<file>: cannot open as HDF5` | `pattern` matched a non-HDF5 sibling (a `.nc` twin, a Parquet sidecar) | Tighten `pattern` (e.g. `"*.h5"`); re-check `SKILL.md`'s inspect step (`ls -la` the directory) |
+| Bare `KeyError: "... object 'X' doesn't exist"` with **no filename** | An HDF5 path is wrong in your own snippet (generation always prefixes the filename: `<file>: <yaml key> '/X' not found in file` means that path is absent in that matched file) | Run `SKILL.md`'s h5py dump on the named file; fix the group/dataset path in the YAML |
+| `<file>: no params at group='...' from=...` | **files only.** Wrong `group`, wrong `from` (attrs vs datasets), or the "scalars" are `(1,)`-shaped, which `from: datasets` skips | Check the dump: attrs on the group → `from: attrs`; `shape=()` datasets → `from: datasets`; `(1,)` shapes → unsupported, stop and report; genuinely no params anywhere in the file → `params: null` (explicit opt-in — see `SKILL.md`'s decision table) |
+| `<file>: no (N,) datasets under <group>` | **batch only.** The `params.group` holds no 1-D datasets, so there is nothing to key entities by — often the group is wrong, or the params are scalars, which means the dataset is `files`, not `batch` | Re-read the dump: `batch` requires `(N,)` datasets under `group` whose N matches the artifacts' leading axis. Scalar params instead → it is a `files` dataset; go back to `SKILL.md`'s decision table |
 | `<file>: param <name> shape (...), expected leading axis N` | **batch only.** One dataset under `params.group` is not axis-0-matched with the entities | That dataset is not a per-entity param. Move it out of `group`, or record it in `metadata` yourself as a shared entry (e.g. `shared_eloss: /eloss`) |
 | `sidecar column 'uid' is reserved` | The table sidecar carries a `uid` column — that name is the provenance hash | Rebuild the sidecar with the column renamed (e.g. `producer_uid`) or dropped, point `path` at the rebuilt file |
 | `pyarrow.lib.ArrowInvalid` while writing manifests | One param changes type/shape across files (scalar in one file, array or string in another) | Dump two files and diff their params; fix the inconsistent one or report |
 | `uid collision: N duplicate provenance ids` | Table `id` column is not unique (all-NaN ids hash identically), or duplicate rows | Choose a genuinely unique id column; dedupe the sidecar |
 | `no files match '...' under ...` | Wrong `pattern` — or the `directory` itself does not exist (same message) | `ls` the directory first; test the glob: `ls <directory>/<pattern>` |
 
-## Using the catalog — raw tiled cheat sheet
-
-tiled's client IS the client; tilewright adds nothing on the HTTP path.
-`<URL>` and `<API_KEY>` below are the endpoint you registered into — the same
-pair the **tilewright-register** skill was handed.
-
-```python
-from tiled.client import from_uri
-from tiled.queries import Key
-
-c = from_uri("<URL>", api_key="<API_KEY>")   # the endpoint you registered into
-list(c)                                   # dataset keys
-dict(c["BROAD_SIGMA"].metadata)           # dataset provenance metadata
-ds = c["BROAD_SIGMA"]
-len(ds)                                   # entity count
-
-# SQL-served metadata queries (Key comparisons only; never Regex):
-hits = ds.search(Key("sigma") >= 0.04).search(Key("sigma") <= 0.05)
-hits = hits.search(Key("gamma") == 0.1)   # chain freely
-ent = hits.values().first()
-dict(ent.metadata)                        # physics params + Mode-A locators
-
-# Sliced reads — the server reads only the requested bytes:
-arr = ent["rixs_spectrum"]
-arr.shape                                 # (151, 40)
-arr[0:5, :]                               # numpy array, lazy adapter
-
-# Bulk export — whole entity as one HDF5 blob, single round trip:
-import io
-buf = io.BytesIO()
-ent.export(buf, format="application/x-hdf5")
-open("entity.h5", "wb").write(buf.getvalue())
-```
-
-## Mode A — direct h5py access (same-filesystem readers)
-
-Every registered entity carries `path_<type>` / `dataset_<type>` /
-`index_<type>` locator metadata. `tilewright.client` parses it and does the
-one non-trivial read (batched row index before user slice):
-
-```python
-from tiled.client import from_uri
-from tiled.queries import Key
-from tilewright import client as tw
-
-c = from_uri("<URL>", api_key="<API_KEY>")   # the endpoint you registered into
-ent = c["BROAD_SIGMA"].search(Key("sigma") >= 0.04).values().first()
-tw.locate(ent)      # {"rixs_spectrum": {"file": ..., "dataset": ..., "index": ...}}
-base = "/sdf/data/lcls/ds/prj/prjmaiqmag01/results/data-source/RIXS_SIM_BROAD_SIGMA"
-spec = tw.load(ent, "rixs_spectrum", base)          # (151, 40), pure h5py
-row0 = tw.load(ent, "rixs_spectrum", base, slc=(0, slice(None)))
-
-# Table (pointer) entities have no artifact locators; locate() returns the
-# entity metadata verbatim (sidecar columns + rendered locator columns):
-cn = c["CNCS_incident_beam"].values().first()
-tw.locate(cn)["globus_url"]
-```
-
-## Verify
-
-Needs a registered dataset on a running server — i.e. after the
-**tilewright-register** skill has done its job, not at the end of onboarding.
-`--project` keeps this runnable from the data root:
-
-```bash
-uv run --project <tilewright repo root> python - <<'EOF'
-from tiled.client import from_uri
-c = from_uri("<URL>", api_key="<API_KEY>")   # the endpoint you registered into
-print(list(c))                          # dataset keys
-ds = c[list(c)[0]]
-ent = ds.values().first()
-print(dict(ent.metadata))               # physics params + locators
-print({k: ent[k].shape for k in ent} if len(ent) else "pointer-only entity")
-EOF
-```
