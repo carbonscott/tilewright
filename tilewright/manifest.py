@@ -10,7 +10,7 @@ import hashlib
 import json
 import sys
 from fnmatch import fnmatch
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import h5py
 import numpy as np
@@ -104,12 +104,18 @@ def validate(raw):
         _only_keys(errors, body, {"directory", "file", "pattern", "params", "server_base_dir"},
                    "source.groups")
         _need_str(errors, body, "file", "source.groups")
+        if isinstance(body.get("file"), str) and (body["file"].startswith("/") or ".." in body["file"].split("/")):
+            errors.append("source.groups.file must be relative to 'directory' and free of '..' — it is joined onto the server's view of the root, which an absolute or escaping path silently discards")
         _need_str(errors, body, "pattern", "source.groups")
         if isinstance(body.get("pattern"), str) and body["pattern"].startswith("/"):
             errors.append("source.groups.pattern matches TOP-LEVEL group names inside the file"
                           " (e.g. 'sample_*'), not absolute HDF5 paths")
         _check_entity_params(errors, body, "source.groups")
         _check_artifacts(errors, raw, tag)
+        for i, a in enumerate(raw.get("artifacts") or []):
+            if isinstance(a, dict) and isinstance(a.get("dataset"), str) and a["dataset"].startswith("/"):
+                errors.append(f"artifacts[{i}].dataset {a['dataset']!r} is resolved WITHIN each entity group"
+                              " — write it relative to the group (e.g. 'data', not '/sample_1/data')")
     elif tag == "batch":
         _only_keys(errors, body, {"directory", "pattern", "params", "extra", "server_base_dir"}, "source.batch")
         _need_str(errors, body, "pattern", "source.batch")
@@ -246,10 +252,12 @@ def _generate_groups(cfg):
     file path — so artifact 'dataset' paths are resolved WITHIN each entity's group."""
     src = cfg["source"]["groups"]
     root = Path(src["directory"])
-    fp = root / src["file"]
+    # Canonical rel: './many.h5' and 'many.h5' name one file, so they must hash to
+    # ONE uid — what relative_to().as_posix() already gives 'files' for free.
+    rel, spec = PurePosixPath(src["file"]).as_posix(), src["params"]
+    fp = root / rel
     if not fp.exists():
         raise FileNotFoundError(f"source.groups file not found: {fp}")
-    rel, spec = src["file"], src["params"]
     ent_rows, art_rows = [], []
     with _h5open(fp) as f:
         names = [n for n in sorted(f) if fnmatch(n, src["pattern"])

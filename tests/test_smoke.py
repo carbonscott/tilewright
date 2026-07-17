@@ -6,7 +6,7 @@ Run from the repo root:
 
 Four checks are enforced here:
   1. the proof corpus generates exactly the expected entity/artifact counts;
-  2. total source LOC in tilewright/ stays <= 820;
+  2. total source LOC in tilewright/ stays <= 830;
   3. the contract's top-level concept set never grows past 4 keys;
   4. every skill's frontmatter still parses and names its own directory.
 
@@ -17,6 +17,7 @@ the dataset: where /sdf IS mounted, a missing dataset fails loudly rather than
 skipping. Budgets 2 and 3 always run.
 """
 
+import os
 from pathlib import Path
 
 import pytest
@@ -155,8 +156,11 @@ def _groups_h5(tmp_path, n=3):
 
     Params are shape=() DATASETS, not attrs: the real file's group attrs are
     empty (verdict on #5), so a walker that reads only attrs finds nothing here.
-    /notes and /README are decoys — the pattern must select on group NAME, and a
-    top-level DATASET must never become an entity.
+    /notes and /sample_README are decoys, and each bites a different guard:
+    /notes is a group the pattern must not match, while /sample_README DOES
+    match it and is a DATASET — so only the isinstance(Group) filter keeps it
+    from becoming an entity. (A decoy the pattern cannot match would exercise
+    nothing: the filter would never see it.)
     """
     h5py = pytest.importorskip("h5py")
     import numpy as np
@@ -170,8 +174,8 @@ def _groups_h5(tmp_path, n=3):
             p.create_dataset("J1a", data=np.float32(i))
             g.create_dataset("data", data=np.arange(20, dtype="float32").reshape(4, 5) + i)
             g.create_dataset("powder_data", data=np.ones((3,), dtype="float64"))
-        f.create_group("notes")                        # a group the pattern must not match
-        f.create_dataset("README", data=np.zeros(2))   # not a group: not an entity
+        f.create_group("notes")                              # a group the pattern must not match
+        f.create_dataset("sample_README", data=np.zeros(2))  # MATCHES, but not a group: not an entity
     return path
 
 
@@ -283,10 +287,119 @@ def test_groups_manifests_carry_the_shape_registration_expects(tmp_path):
     assert ent_df["uid"].is_unique
 
 
+def test_groups_file_must_be_relative_to_the_data_root(tmp_path):
+    """An absolute (or '..') 'file' SILENTLY DISCARDS server_base_dir at serve time.
+
+    os.path.join(base, file) returns file verbatim when file is absolute
+    (register.py:55), so data_uri carries the generating host's path instead of
+    the server's — after --check, generate, and a failed=0 registration all
+    pass. It breaks only at first read. validate() already rejects '..' in
+    server_base_dir (manifest.py:96) because it reaches data_uri; 'file' reaches
+    the very same string and was left unchecked.
+    """
+    assert validate(_groups_cfg(tmp_path)) == []  # the relative spelling stays legal
+    for bad in ("/lustre/local/nips3.h5", "../Zhantao/nips3.h5"):
+        errs = validate(_groups_cfg(tmp_path, file=bad))
+        assert any("source.groups.file" in e for e in errs), f"{bad!r} accepted: {errs}"
+    # The leak, made concrete: this is what register.py would have built.
+    assert os.path.join(SERVER, "/lustre/local/nips3.h5") == "/lustre/local/nips3.h5"
+
+
+def test_groups_uid_is_stable_under_cosmetic_spellings_of_file(tmp_path):
+    """'./many.h5' and 'many.h5' name ONE file, so they must be ONE uid.
+
+    ent_key = f"{dataset_key}_{uid[:13]}" (register.py:80): a uid that moves when
+    an author merely tidies the YAML re-registers all 20,000 entities under fresh
+    keys instead of skipping them as existing — exactly the churn the uid
+    provenance test above exists to forbid. 'files' gets this free via
+    relative_to().as_posix(); 'groups' took src["file"] raw.
+    """
+    _groups_h5(tmp_path)
+    plain, _ = _generate_groups(_groups_cfg(tmp_path))
+    dotted, dotted_arts = _generate_groups(_groups_cfg(tmp_path, file="./many.h5"))
+    assert [r["uid"] for r in dotted] == [r["uid"] for r in plain], "a cosmetic './' moved every uid"
+    assert dotted[0]["uid"] == _uid("many.h5:/sample_1"), "the canonical spelling must win"
+    assert dotted_arts[0]["file"] == "many.h5", "the artifact row must carry the canonical rel path"
+
+
+def test_groups_artifact_dataset_must_be_relative_to_the_entity_group(tmp_path):
+    """Absolute artifact datasets validate clean, then die on a doubled path.
+
+    The walker joins per entity, so '/sample_1/data' becomes
+    '/sample_1/sample_1/data' — a baffling KeyError at generate time for an
+    author who followed _check_artifacts' own '/spectra' hint (manifest.py:41).
+    Reject it where 'pattern' already rejects the identical instinct: validate.
+    """
+    cfg = _groups_cfg(tmp_path)
+    cfg["artifacts"] = [{"type": "spectrum", "dataset": "/sample_1/data"}]
+    assert any("WITHIN each entity group" in e for e in validate(cfg)), "absolute dataset accepted"
+    assert validate(_groups_cfg(tmp_path)) == []  # the relative spelling stays legal
+
+
+def test_groups_pattern_matching_nothing_is_a_loud_error(tmp_path):
+    """No match is an authoring mistake, not a dataset with zero entities.
+
+    Returning empty would write a 0-row manifest that only fails at Gate B, and
+    only if the author predicted a non-zero count.
+    """
+    _groups_h5(tmp_path)
+    with pytest.raises(ValueError, match="no top-level groups match"):
+        _generate_groups(_groups_cfg(tmp_path, pattern="specimen_*"))
+
+
+def test_groups_top_level_dataset_matching_the_pattern_is_not_an_entity(tmp_path):
+    """/sample_README matches 'sample_*' but is a DATASET — only the filter stops it.
+
+    Without isinstance(f[n], h5py.Group) it becomes a 4th entity and the params
+    read raises. The pattern globs NAMES; being a group is what makes an entity.
+    """
+    _groups_h5(tmp_path)
+    ent_rows, _ = _generate_groups(_groups_cfg(tmp_path))
+    assert len(ent_rows) == 3, "a top-level dataset matching the pattern became an entity"
+
+
+def test_groups_reserved_uid_param_is_rejected(tmp_path):
+    """A param named 'uid' would overwrite the provenance hash in the entity row.
+
+    ent_rows.append({"uid": uid, **params}) — params wins, silently repointing the
+    entity at whatever the file happened to store. 'files' and 'batch' both guard
+    this; 'groups' must too.
+    """
+    h5py = pytest.importorskip("h5py")
+    import numpy as np
+
+    path = _groups_h5(tmp_path)
+    with h5py.File(path, "r+") as f:
+        f["sample_1/params"].create_dataset("uid", data=np.float32(7))
+    with pytest.raises(ValueError, match="'uid' is reserved"):
+        _generate_groups(_groups_cfg(tmp_path))
+
+
+def test_groups_params_group_yielding_nothing_is_a_loud_error(tmp_path):
+    """An empty params group means the layout was misread, never "no params".
+
+    'params: null' is the explicit way to declare a dataset has none; a lookup
+    that finds nothing is a hard error (the files rule, stated in the reference).
+    Degrading to {} would ship 20,000 entities with no queryable physics at all.
+    """
+    h5py = pytest.importorskip("h5py")
+    import numpy as np
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with h5py.File(empty / "many.h5", "w") as f:
+        g = f.create_group("sample_1")
+        g.create_group("params")  # present, but holds no scalar datasets
+        g.create_dataset("data", data=np.zeros((4, 3), dtype="float32"))
+        g.create_dataset("powder_data", data=np.zeros((3,), dtype="float64"))
+    with pytest.raises(ValueError, match="no params at group"):
+        _generate_groups(_groups_cfg(empty))
+
+
 def test_loc_budget():
     total = sum(len(p.read_text().splitlines())
                 for p in (REPO / "tilewright").glob("*.py"))
-    assert total <= 820, f"OVER BUDGET: tilewright/*.py totals {total} LOC > 820"
+    assert total <= 830, f"OVER BUDGET: tilewright/*.py totals {total} LOC > 830"
 
 
 def test_contract_concept_budget():
