@@ -342,7 +342,7 @@ def _generate_table(cfg):
     if "uid" in df.columns:
         raise ValueError(f"{path}: sidecar column 'uid' is reserved (it is the provenance hash)")
     ent_rows = []
-    for _, r in df.iterrows():
+    for r in df.to_dict("records"):
         params = {k: _to_python(v) for k, v in r.items()}
         row = {"uid": _uid(str(r[src["id"]])), **params}
         for col, template in src.get("locator", {}).items():

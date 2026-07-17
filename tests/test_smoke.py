@@ -20,12 +20,14 @@ skipping. Budgets 2 and 3 always run.
 import os
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from tilewright.manifest import (
     ARTIFACT_COLUMNS,
     TOP_LEVEL_KEYS,
     _generate_groups,
+    _generate_table,
     _uid,
     generate_manifests,
     load_config,
@@ -394,6 +396,58 @@ def test_groups_params_group_yielding_nothing_is_a_loud_error(tmp_path):
         g.create_dataset("powder_data", data=np.zeros((3,), dtype="float64"))
     with pytest.raises(ValueError, match="no params at group"):
         _generate_groups(_groups_cfg(empty))
+
+
+# --- source.table: an int id must stay an int through the row walk ----------
+#
+# The table walker reads one sidecar row at a time. A row taken as a pandas
+# Series carries ONE dtype, so an all-numeric sidecar mixing int and float
+# upcasts the int64 id to float64 and id 1 becomes 1.0 — poisoning both things
+# derived from it: the locator template ('/sample_1.0/data') and the uid
+# provenance hash (sha256 of "1.0", not "1"). A string column masks the bug by
+# forcing the row to object dtype, which is exactly why the shipped corpus
+# never caught it. See issue #6.
+
+
+def _table_rows(tmp_path, df):
+    """The entity rows _generate_table walks out of a sidecar written from df."""
+    df.to_parquet(tmp_path / "sidecar.parquet", index=False)
+    ent_rows, _ = _generate_table(
+        {"key": "t", "metadata": {"data_type": "rows"},
+         "source": {"table": {"directory": str(tmp_path), "path": "sidecar.parquet",
+                              "id": "id", "locator": {"loc": "/sample_{id}/data"}}}})
+    return ent_rows
+
+
+def test_table_int_id_is_not_upcast_by_an_all_numeric_sidecar(tmp_path):
+    """THE REGRESSION GUARD: int64 id + float64 column is the triggering shape.
+
+    Reverting the walk to `df.iterrows()` collapses each row to float64 here and
+    every assertion below flips at once. The uid is pinned to the literal hash,
+    not recomputed from the row, because uid is the provenance contract
+    (manifest.py:3) — a uid that silently changes re-registers every entity
+    under a new key (register.py:80) instead of skipping it as existing.
+    """
+    rows = _table_rows(tmp_path, pd.DataFrame({"id": [1, 2], "energy": [9.5, 10.5]}))
+    assert rows[0]["loc"] == "/sample_1/data", "int id rendered as a float in the locator"
+    assert rows[0]["uid"] == _uid("1") == "6b86b273ff34fce1"  # sha256("1")[:16]
+    assert rows[0]["id"] == 1 and isinstance(rows[0]["id"], int), (
+        f"id round-tripped as {rows[0]['id']!r} ({type(rows[0]['id']).__name__})"
+    )
+    assert rows[0]["energy"] == 9.5  # the float column is still a float
+
+
+def test_table_int_id_with_a_string_column_was_never_broken(tmp_path):
+    """The control: a string column forces object dtype, so the bug is absent.
+
+    This is why blast radius on the shipped examples is zero — they key on
+    strings. It also pins that the fix did not regress the masking case.
+    """
+    rows = _table_rows(tmp_path, pd.DataFrame(
+        {"id": [1, 2], "energy": [9.5, 10.5], "name": ["a", "b"]}))
+    assert rows[0]["loc"] == "/sample_1/data"
+    assert rows[0]["uid"] == _uid("1")
+    assert rows[0]["name"] == "a"
 
 
 def test_loc_budget():
