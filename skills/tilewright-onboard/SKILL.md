@@ -12,11 +12,13 @@ first. You have freedom in *how* you model the data; you have a fixed, tested
 *done* — two machine-checkable gates. **Stop after Gate B: do not register,
 serve, or query.**
 
-The full contract (every field), the four worked examples, the limits &
-reserved-names list, and the error-triage table live in
-**`${CLAUDE_SKILL_DIR}/reference/onboarding.md`** — read it before you write any
-YAML (step 3), and again to decode any generator error. This skill is the
-procedure; that file is the reference.
+**`${CLAUDE_SKILL_DIR}/reference/onboarding.md`** — "the reference" below — is the
+field spec: what every key means, four worked examples, the limits the contract
+cannot express, and an error-triage table. This skill is the procedure: what to
+observe, what to decide, and what proves you are done. Neither file repeats the
+other, so do not look here for a field rule or there for a gate. This skill sends
+you to the reference twice: at **step 3**, to author the YAML, and at its **Error
+triage** table, to decode a Gate A or Gate B failure.
 
 ## Setup — on a host that can see the data (e.g. sdfiana025)
 
@@ -58,13 +60,13 @@ are relative to the data root.
 
 In step 3, write `directory:` as that `pwd -P` value — or a subdirectory of it
 if the files live one level down — but never as bare `pwd`. If you reached the
-data root through a symlink, `pwd` hands you a logical path that passes both
-gates here and then serves nothing: the server compares paths as written and
-never resolves them, so a logical path is refused even though the data
-genuinely lives under the root. Writing the physical path now means the problem
-never exists. Getting it wrong is expensive later — fixing `directory:` after
-registration also requires deleting the registered dataset, because
-re-registering never rewrites an existing asset.
+data root through a symlink, `pwd` hands you a logical path that **passes both
+gates here and then serves nothing**: nothing opens an asset URI until a read,
+so neither gate can see it. That is why this is an instruction and not a check.
+The reference's `### source` → `directory` bullet has the mechanism. Writing the
+physical path now means the problem never exists. Getting it wrong is expensive
+later — fixing `directory:` after registration also requires deleting the
+registered dataset, because re-registering never rewrites an existing asset.
 
 ## Step 1 — inspect (observe; never guess)
 
@@ -110,7 +112,7 @@ pointer-only, no served bytes).
 | **One** file holds many sibling top-level groups (`/sample_1`, `/sample_2`, ...), each self-contained: its own params subgroup and its own **unstacked** arrays | `groups` | `{group: <subgroup, relative>, from: attrs\|datasets}` | every non-param dataset **inside a group** is an artifact, named relative to it |
 | Readable HDF5, arrays present, but **no scalar params anywhere** (no attrs, no 0-d datasets) | `files` | `null` — explicit opt-in: entities keyed by file path alone, metadata is just `uid` | every dataset is an artifact |
 | h5py cannot open the files at all (not HDF5, or data lives at a remote facility), but a per-entity Parquet table exists or can be built | `table` | — (`id` = a unique column) | none: `artifacts` absent or `[]` |
-| **Openable** HDF5 but no scalar params at a single group (params scattered in nested subgroups) | prefer `files` + `params: null` if the arrays should be served; `table` if you have (or build) a per-entity sidecar and accept pointer-only | per that choice | per that choice |
+| **Openable** HDF5 but no extractable scalar params at a single group (params scattered in nested subgroups) | prefer `files` + `params: null` if the arrays should be served; `table` if you have (or build) a per-entity sidecar and accept pointer-only | per that choice | per that choice |
 
 **`batch` vs `groups`** — both put many entities in one file; the dump tells them
 apart. Stacked on a leading axis (`/spectra` is `(2000, 151)`) → `batch`. Sibling
@@ -128,12 +130,20 @@ the group (`data`, never `/sample_1/data`).
 
 ## Step 3 — author `.tilewright/datasets/<KEY>.yml`
 
-Exactly four top-level keys, no others: `key`, `metadata` (`data_type`
-required), `source` (exactly one of `files | batch | table | groups`), `artifacts`
-(min 1 for files/batch/groups; **absent or `[]` for table**). The field-by-field spec,
-the four worked examples, and the limits/reserved-names section are in the
-reference doc — copy the closest worked example and adapt it. Unknown keys and
-wrong types fail loudly at Gate A.
+Exactly four top-level keys, no others: `key`, `metadata`, `source`, `artifacts`.
+What each one accepts is the reference's job, not this skill's. Open
+**`${CLAUDE_SKILL_DIR}/reference/onboarding.md`** now and read three of its
+sections:
+
+- **Worked example** for the tag you chose in step 2 — copy it, then adapt it;
+- **The dataset YAML contract — field by field** — the `### source` subsection for
+  your tag, plus `### artifacts`;
+- **Limits and reserved names** — before you invent a key the contract cannot say.
+
+Unknown keys and wrong types fail loudly at Gate A. But Gate A cannot tell you
+that a key you never wrote was the one you needed, which is why you read the
+section rather than guess and let the gate correct you: the silent losses are the
+*optional* keys — `extra`, `locator`, `params: null` — and no gate asks for them.
 
 ## Step 4 — Gate A: validate the contract (touches no data)
 
@@ -143,7 +153,7 @@ uv run --project <tilewright repo root> tilewright manifest .tilewright/datasets
 
 **Gate A passes only when it prints `contract OK: ...` and exits 0.** On a
 contract error it prints *every* problem in domain language and exits 1 — fix
-them all (decode with the reference's error-triage table) and re-run until clean.
+them all (decode with the reference's **Error triage** table) and re-run until clean.
 
 ## Step 5 — Gate B: predict, generate, compare
 
