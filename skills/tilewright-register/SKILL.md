@@ -32,7 +32,9 @@ without leaving the data root — `--project` selects the environment and does
 **not** change the working directory:
 
 ```bash
-export UV_CACHE_DIR="$SCRATCH/.uv-cache"   # S3DF: home is ~24 GB; put uv's cache on $SCRATCH (or any roomy dir). Omit off S3DF.
+# S3DF only (home ~24 GB): put uv's cache on $SCRATCH — an unset $SCRATCH writes to an
+# unwritable /.uv-cache, so set it or point at any roomy dir. Omit this line off S3DF.
+export UV_CACHE_DIR="$SCRATCH/.uv-cache"
 uv run --project <tilewright repo root> tilewright ...
 ```
 
@@ -131,7 +133,7 @@ Three things this gate cannot tell you, so do not over-read it:
 Differing is normal, not broken. A deployed pod mounts the same bytes somewhere
 else, and nothing about your data is wrong.
 
-**Measured on the MAIQMag deployment (2026-07), for one and the same file:**
+**Measured on an S3DF deployment (2026-07), for one and the same file:**
 
 | | |
 |---|---|

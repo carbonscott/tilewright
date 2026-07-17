@@ -45,7 +45,7 @@ shared:                         # optional; surfaced as shared_dataset_<type> on
 extra_metadata:                 # optional; per-entity values excluded from uid hash
   - dataset: /log_probs
 locator:                        # pointer only: explicit templates, {col} interpolated per sidecar row
-  globus_path: "/maiqmag/.../cncs_new/{filename}"
+  globus_path: "/<collection>/.../cncs_new/{filename}"
 ```
 
 ## Manifest contract (Parquet)
