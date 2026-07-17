@@ -83,11 +83,13 @@ uv run --project <tilewright repo root> tilewright register .tilewright/datasets
 
 Whoever deploys that endpoint owns its `readable_storage` allowlist, and it is not
 yours to edit. If you have no endpoint — or the one you were given cannot resolve your
-paths — `skills/tilewright-register/reference/self-hosted-server.md` covers running your
-own server for testing, including the impostor check that proves the server answering on
-the port is the one you started (a log line cannot). The repo-root `config.yml` is
-the legacy single-catalog setup for the shipped `examples/` corpus, which names each
-data directory explicitly; new datasets should use the `.tilewright/` layout instead.
+paths —
+[`self-hosted-server.md`](skills/tilewright-register/reference/self-hosted-server.md)
+covers running your own server for testing, including the impostor check that proves
+the server answering on the port is the one you started (a log line cannot). The
+repo-root `config.yml` is the legacy single-catalog setup for the shipped `examples/`
+corpus, which names each data directory explicitly; new datasets should use the
+`.tilewright/` layout instead.
 
 Registration alone does not prove much: it never opens the data, and the
 allowlist is only checked on read — so a dataset can register with `failed=0`
@@ -106,4 +108,4 @@ c["<KEY>"].search(Key("<param>") > 0)       # query entities by metadata
 
 For more — chained metadata queries, sliced and bulk reads, and Mode A (direct h5py
 access for readers on the same filesystem as the data) — see
-[`.ai/docs/using-the-catalog.md`](.ai/docs/using-the-catalog.md).
+[`docs/using-the-catalog.md`](docs/using-the-catalog.md).
