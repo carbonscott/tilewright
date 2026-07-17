@@ -115,10 +115,12 @@ above disagree with this list, **v2 wins**.
 1. **Contract is a tagged union.** Top-level keys: `key, metadata, source,
    artifacts` — nothing else (`label`, `shared`, `extra_metadata`,
    `provenance`, `locator`, `data`, `parameters` are gone as top-level
-   concepts). `source` holds exactly one of `files | batch | table`, each
+   concepts). `source` holds exactly one of `files | batch | table | groups`
+   (`groups` added after v2 — see PR #8), each
    owning only its keys — illegal layout×location combos are
    unrepresentable, not validated away. The old `location` enum split into
-   two orthogonal bits: `params: {group, from: attrs|datasets}` (files);
+   two orthogonal bits: `params: {group, from: attrs|datasets}` (files, and
+   `groups` one level down, scoped to each entity's own group);
    batch params are always datasets under `params.group`. `batch.extra`
    keeps the `/log_probs` use-case. `table` (ex-pointer) is manifest
    passthrough: sidecar rows ARE the entities; requires `id` (unique
