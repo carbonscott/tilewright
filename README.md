@@ -18,11 +18,12 @@ arrays are served lazily from the source HDF5 files.
 uv sync                     # creates .venv with tiled + deps
 ```
 
-On S3DF, optionally point `UV_CACHE_DIR` at a shared cache first to avoid
-re-downloads:
+On S3DF your home directory is small (~24 GB) and uv's cache can fill it
+quickly. Point `UV_CACHE_DIR` at `$SCRATCH` (or another roomy project
+location) before running `uv sync`:
 
 ```bash
-export UV_CACHE_DIR=/sdf/data/lcls/ds/prj/prjmaiqmag01/results/cwang31/.UV_CACHE
+export UV_CACHE_DIR="$SCRATCH/.uv-cache"
 ```
 
 Run the CLI from your data root with `uv run --project <tilewright repo root>
