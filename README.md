@@ -19,12 +19,15 @@ uv sync                     # creates .venv with tiled + deps
 ```
 
 On S3DF your home directory is small (~24 GB) and uv's cache can fill it
-quickly. Point `UV_CACHE_DIR` at `$SCRATCH` (or another roomy project
-location) before running `uv sync`:
+quickly. Point `UV_CACHE_DIR` at `$SCRATCH` (or any roomy directory you can
+write) before running `uv sync`:
 
 ```bash
 export UV_CACHE_DIR="$SCRATCH/.uv-cache"
 ```
+
+If `$SCRATCH` is not set in your shell, substitute a concrete roomy path —
+an unset variable would expand to an unwritable `/.uv-cache`.
 
 Run the CLI from your data root with `uv run --project <tilewright repo root>
 tilewright <command>` (or `uv tool install .` for a bare `tilewright`).

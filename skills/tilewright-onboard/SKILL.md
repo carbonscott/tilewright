@@ -47,7 +47,7 @@ copy-pasted commands point at files that do not exist. The shipped
 
 ```bash
 cd <tilewright repo root>        # .../codes/tilewright — once, to build the env
-export UV_CACHE_DIR="$SCRATCH/.uv-cache"   # S3DF: home is ~24 GB; keep uv's cache on $SCRATCH. Omit off S3DF.
+export UV_CACHE_DIR="$SCRATCH/.uv-cache"   # S3DF: home is ~24 GB; put uv's cache on $SCRATCH (or any roomy dir). Omit off S3DF.
 uv sync                          # once — creates .venv
 
 cd <data root>                   # then work from here
