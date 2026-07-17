@@ -17,8 +17,9 @@ field spec: what every key means, four worked examples, the limits the contract
 cannot express, and an error-triage table. This skill is the procedure: what to
 observe, what to decide, and what proves you are done. Neither file repeats the
 other, so do not look here for a field rule or there for a gate. This skill sends
-you to the reference twice: at **step 3**, to author the YAML, and at its **Error
-triage** table, to decode a Gate A or Gate B failure.
+you to the reference three times: in **setup**, for the `directory` mechanism; at
+**step 3**, to author the YAML; and at **Gate A**, to decode a contract error with
+its **Error triage** table.
 
 ## Setup — on a host that can see the data (e.g. sdfiana025)
 

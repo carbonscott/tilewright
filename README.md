@@ -85,9 +85,9 @@ Whoever deploys that endpoint owns its `readable_storage` allowlist, and it is n
 yours to edit. If you have no endpoint — or the one you were given cannot resolve your
 paths — `skills/tilewright-register/reference/self-hosted-server.md` covers running your
 own server for testing, including the impostor check that proves the server answering on
-the port is the one you started (a log line cannot). The repo-root `config.yml` is the legacy single-catalog setup for the
-shipped `examples/` corpus, which names each data directory explicitly; new datasets
-should use the `.tilewright/` layout instead.
+the port is the one you started (a log line cannot). The repo-root `config.yml` is
+the legacy single-catalog setup for the shipped `examples/` corpus, which names each
+data directory explicitly; new datasets should use the `.tilewright/` layout instead.
 
 Registration alone does not prove much: it never opens the data, and the
 allowlist is only checked on read — so a dataset can register with `failed=0`
